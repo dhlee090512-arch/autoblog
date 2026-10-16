@@ -83,12 +83,13 @@ def generate_fx_line_chart(ticker_symbol="KRW=X", filename="usdkrw_chart.png"):
         print(f"[차트생성 오류] 환율 차트: {e}")
         return None
 
-# 4. [MTS 스타일] 종목별 4단 프로 차트 (미니멀, 콤마, MA 없는 범례, 파스텔 MACD, X축 월 수평 정렬)
+# 4. [MTS 스타일] 종목별 4단 프로 차트 (period=1y로 변경하여 240일선 데이터 확보)
 def generate_stock_pro_chart(ticker_symbol, title_prefix, filename):
     try:
         filepath = os.path.join(CHART_DIR, filename)
         print(f"[차트생성] 종목 데이터 다운로드 중 ({ticker_symbol})...")
-        df = yf.download(ticker_symbol, period="3mo", interval="1d", progress=False)
+        # 240일 이동평균선 계산을 위해 기간을 1년치(1y)로 넉넉하게 확장
+        df = yf.download(ticker_symbol, period="1y", interval="1d", progress=False)
         if df.empty:
             print(f"[차트생성] {ticker_symbol} 데이터를 가져오지 못했습니다.")
             return None
@@ -101,9 +102,11 @@ def generate_stock_pro_chart(ticker_symbol, title_prefix, filename):
                 df[col] = pd.to_numeric(df[col], errors='coerce')
         df = df.dropna()
 
-        if df.empty or len(df) < 26:
-            print(f"[차트생성] {ticker_symbol} 유효 데이터 부족 (행 개수: {len(df)})")
-            return None
+        if df.empty or len(df) < 250:
+            print(f"[차트생성 경고] {ticker_symbol} 데이터 행 개수({len(df)})가 250개 미만입니다. 240일선 계산에 일부 제약이 있을 수 있습니다.")
+            if len(df) < 26:
+                print(f"[차트생성 오류] {ticker_symbol} 유효 데이터 부족")
+                return None
 
         # --- 보조지표 계산 (RSI, MACD 및 히스토그램 분할) ---
         delta = df['Close'].diff()
