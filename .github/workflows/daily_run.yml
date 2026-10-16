@@ -2,9 +2,8 @@ name: Daily Auto Blog Generator
 
 on:
   schedule:
-    # UTC 기준 매일 07:30 (한국시간 KST 기준 매일 16:30 장 마감 후)
-    - cron: '30 7 * * *'
-  workflow_dispatch: # GitHub 웹페이지에서 버튼을 눌러 수동으로 즉시 실행할 수 있게 설정
+    - cron: '30 7 * * *' # 한국시간 오후 4시 30분
+  workflow_dispatch:
 
 jobs:
   run-script:
@@ -24,7 +23,15 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
-    - name: 자동화 파이썬 스크립트 실행
+    - name: 파이썬 스크립트 실행 (HTML 및 차트 생성)
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       run: python main.py
+
+    - name: 생성된 파일 깃허브에 자동 업로드(Commit)
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.io"
+        git add blog_preview.html usdkrw_chart.png
+        git commit -m "Auto-generate daily blog preview [skip ci]" || exit 0
+        git push
