@@ -20,6 +20,7 @@ def generate_usd_krw_chart():
         print("원/달러 환율 차트 생성 중...")
         df = yf.download("KRW=X", period="3m", interval="1d")
         if df.empty:
+            print("환율 데이터를 가져오지 못했습니다.")
             return None
 
         mc = mpf.make_marketcolors(up='red', down='blue', edge='inherit', wick='inherit', volume='in')
@@ -36,6 +37,7 @@ def generate_usd_krw_chart():
             figratio=(12, 6),
             figscale=1.0
         )
+        print(f"차트 이미지 생성 완료: {chart_filename}")
         return chart_filename
     except Exception as e:
         print(f"차트 생성 오류: {e}")
@@ -70,9 +72,9 @@ system_instruction = """
 
 user_prompt = f"--- [국장 대시보드 Data] ---\n{kr_raw[:3500]}\n\n--- [미장 대시보드 Data] ---\n{us_raw[:3500]}"
 
-print("Gemini API로 블로그 포스팅 생성 중...")
+print("Gemini API로 블로그 포스팅 생성 중 (gemini-3.5-flash-lite)...")
 response = client.models.generate_content(
-    model="gemini-2.5-flash",
+    model="gemini-3.5-flash-lite",
     contents=user_prompt,
     config=types.GenerateContentConfig(
         system_instruction=system_instruction,
@@ -84,6 +86,8 @@ blog_text = response.text
 chart_file = generate_usd_krw_chart()
 
 # 5. HTML 미리보기 파일 생성
+chart_img_html = f'<img src="{chart_file}" alt="환율 차트">' if chart_file else ''
+
 html_content = f"""<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -92,7 +96,7 @@ html_content = f"""<!DOCTYPE html>
     <style>
         body {{ font-family: 'Apple SD Gothic Neo', sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; line-height: 1.6; color: #333; }}
         h1 {{ border-bottom: 2px solid #333; padding-bottom: 10px; }}
-        .content {{ white-space: pre-wrap; background: #f9f9f9; padding: 20px; border-radius: 8px; font-size: 16px; }}
+        .content {{ white-space: pre-wrap; background: #f9f9f9; padding: 20px; border-radius: 8px; font-size: 16px; word-break: break-all; }}
         img {{ max-width: 100%; height: auto; margin: 20px 0; border: 1px solid #ddd; border-radius: 4px; }}
     </style>
 </head>
@@ -102,7 +106,7 @@ html_content = f"""<!DOCTYPE html>
     <hr>
     
     <h3>📈 환율 차트</h3>
-    <img src="{chart_file}" alt="환율 차트">
+    {chart_img_html}
 
     <h3>📝 본문 텍스트</h3>
     <div class="content">{blog_text}</div>
