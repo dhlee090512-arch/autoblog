@@ -63,10 +63,10 @@ def capture_finviz_map(filename="finviz_map.png"):
     filepath = os.path.join(CHART_DIR, filename)
     url = "https://finviz.com/map?t=sec"
     
-    print("[Playwright] Finviz 섹터 맵 보안 우회 캡처 중...")
+    print("[Playwright] Finviz 섹터 맵 정밀 캡처 중...")
     try:
         with sync_playwright() as p:
-            # 자동화 탐지(Cloudflare 등) 우회를 위한 인자 설정
+            # 자동화 탐지 우회를 위한 브라우저 인자 설정
             browser = p.chromium.launch(
                 headless=True,
                 args=[
@@ -74,12 +74,12 @@ def capture_finviz_map(filename="finviz_map.png"):
                     "--no-sandbox",
                     "--disable-setuid-sandbox",
                     "--disable-infobars",
-                    "--window-size=1400,900"
+                    "--window-size=1600,1000"
                 ]
             )
             
             context = browser.new_context(
-                viewport={"width": 1400, "height": 900},
+                viewport={"width": 1600, "height": 1000},
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 locale="en-US",
                 timezone_id="America/New_York"
@@ -91,12 +91,32 @@ def capture_finviz_map(filename="finviz_map.png"):
             page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
             
             page.goto(url, timeout=60000)
-            page.wait_for_timeout(7000) # 보안 체크 및 맵 로딩 대기 시간 확보
             
-            page.screenshot(path=filepath, full_page=True)
+            # 맵 로딩 및 보안 체크 대기
+            page.wait_for_timeout(7000)
+            
+            # 화면을 가리는 투어 팝업창 등 제거 시도
+            try:
+                page.evaluate("""
+                    const tourOverlays = document.querySelectorAll('.joyride-overlay, .joyride-tip__container, div[style*="z-index: 1000"]');
+                    tourOverlays.forEach(el => el.remove());
+                """)
+                page.wait_for_timeout(1000)
+            except:
+                pass
+            
+            # #canvas-wrapper 요소만 정확히 타겟팅하여 캡처
+            map_element = page.locator("#canvas-wrapper")
+            
+            if map_element.count() > 0:
+                map_element.first.screenshot(path=filepath)
+                print(f"[캡처 성공] Finviz 맵(#canvas-wrapper) 저장 완료: {filepath}")
+            else:
+                print("[경고] #canvas-wrapper 요소를 찾지 못해 전체 화면으로 대체 캡처합니다.")
+                page.screenshot(path=filepath, clip={"x": 50, "y": 180, "width": 1500, "height": 800})
+
             browser.close()
             
-        print(f"[캡처 성공] Finviz 맵 저장 완료: {filepath}")
         return f"{CHART_DIR}/{filename}"
     except Exception as e:
         print(f"[캡처 오류] Finviz 맵 캡처 실패: {e}")
