@@ -3,8 +3,10 @@ matplotlib.use('Agg') # 화면 출력 없는 서버(CI/CD) 환경용 설정
 import matplotlib.pyplot as plt
 
 import os
+import re
 import time
 import requests
+import pandas as pd
 import yfinance as yf
 import mplfinance as mpf
 from bs4 import BeautifulSoup
@@ -28,14 +30,26 @@ def load_prompt(filename="prompt.txt"):
     with open(filename, "r", encoding="utf-8") as f:
         return f.read()
 
-# 3. 환율 차트 이미지 생성 함수
-def generate_usd_krw_chart():
-    chart_filename = "usdkrw_chart.png"
+# 3. 데이터 타입 오류 방지 및 안전한 차트 생성 헬퍼 함수
+def safe_download_and_plot(ticker_symbol, title_prefix, filename):
     try:
-        print("원/달러 환율 차트 생성 중...")
-        df = yf.download("KRW=X", period="3mo", interval="1d")
+        print(f"{ticker_symbol} 차트 데이터 다운로드 중...")
+        df = yf.download(ticker_symbol, period="3mo", interval="1d", progress=False)
         if df.empty:
-            print("환율 데이터를 가져오지 못했습니다.")
+            print(f"{ticker_symbol} 데이터를 가져오지 못했습니다.")
+            return None
+
+        # yfinance 멀티인덱스 컬럼 구조 플랫화 및 데이터 타입 강제 변환
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.droplevel(1)
+        
+        for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+        df = df.dropna()
+
+        if df.empty:
+            print(f"{ticker_symbol} 유효한 수치 데이터가 없습니다.")
             return None
 
         mc = mpf.make_marketcolors(up='red', down='blue', edge='inherit', wick='inherit', volume='in')
@@ -46,16 +60,16 @@ def generate_usd_krw_chart():
             type='candle',
             mav=(20, 60),
             volume=True,
-            title="\nUSD/KRW Exchange Rate (3 Months)",
+            title=f"\n{title_prefix} ({ticker_symbol})",
             style=style,
-            savefig=chart_filename,
+            savefig=filename,
             figratio=(12, 6),
             figscale=1.0
         )
-        print(f"차트 이미지 생성 완료: {chart_filename}")
-        return chart_filename
+        print(f"차트 이미지 생성 완료: {filename}")
+        return filename
     except Exception as e:
-        print(f"차트 생성 오류: {e}")
+        print(f"{ticker_symbol} 차트 생성 오류: {e}")
         return None
 
 # 4. 대시보드 크롤링 함수
@@ -69,12 +83,12 @@ print("국장 및 미장 대시보드 데이터 수집 중...")
 kr_raw = fetch_dashboard_data("https://dhlee090512-arch.github.io/report/index.html")
 us_raw = fetch_dashboard_data("https://dhlee090512-arch.github.io/report/us_index.html")
 
-# 5. Gemini API 호출 (외부 prompt.txt 로드 및 재시도 로직)
+# 5. Gemini API 호출
 system_instruction = load_prompt("prompt.txt")
 user_prompt = f"--- [국장 대시보드 Data] ---\n{kr_raw[:3500]}\n\n--- [미장 대시보드 Data] ---\n{us_raw[:3500]}"
 
 max_retries = 3
-retry_delay = 10  # 실패 시 대기 시간 (초)
+retry_delay = 10  
 response = None
 
 for attempt in range(1, max_retries + 1):
@@ -88,7 +102,7 @@ for attempt in range(1, max_retries + 1):
                 temperature=0.75,
             ),
         )
-        break  # 성공 시 반복문 탈출
+        break  
     except Exception as e:
         print(f"API 호출 실패 (에러: {e})")
         if attempt < max_retries:
@@ -97,38 +111,75 @@ for attempt in range(1, max_retries + 1):
         else:
             raise RuntimeError("Gemini API 호출이 최대 재시도 횟수를 초과하여 실패했습니다.")
 
-blog_text = response.text
-chart_file = generate_usd_krw_chart()
+raw_blog_text = response.text
 
-# 6. HTML 미리보기 파일 생성 (GitHub Pages 전체 URL로 이미지 연결)
-if chart_file:
-    chart_img_url = f"{GITHUB_PAGES_BASE_URL}/{chart_file}"
-    chart_img_html = f'<img src="{chart_img_url}" alt="환율 차트">'
-else:
-    chart_img_html = '<p>차트 이미지가 생성되지 않았습니다.</p>'
+# 6. 제목 및 본문 파싱 로직
+post_title = "오늘의 블로그 포스팅"
+body_text = raw_blog_text
+
+lines = raw_blog_text.strip().split("\n")
+for line in lines:
+    if line.startswith("[제목]") or line.startswith("제목:"):
+        post_title = re.sub(r"^\[제목\]\s*|^제목:\s*", "", line).strip()
+        body_text = "\n".join([l for l in lines if l != line]).strip()
+        break
+
+# 7. 환율 및 특징주 차트 이미지 다운로드
+charts = {}
+fx_chart = safe_download_and_plot("KRW=X", "USD/KRW Exchange Rate", "usdkrw_chart.png")
+if fx_chart:
+    charts["환율 차트"] = fx_chart
+
+celtrion_chart = safe_download_and_plot("068270.KS", "Celltrion", "celtrion_chart.png")
+if celtrion_chart:
+    charts["셀트리온 차트"] = celtrion_chart
+
+bac_chart = safe_download_and_plot("BAC", "Bank of America", "bac_chart.png")
+if bac_chart:
+    charts["Bank of America 차트"] = bac_chart
+
+# 8. HTML 미리보기 파일 생성
+charts_html = ""
+for title, filename in charts.items():
+    img_url = f"{GITHUB_PAGES_BASE_URL}/{filename}"
+    charts_html += f"""
+    <div class="chart-box">
+        <h3>📈 {title}</h3>
+        <img src="{img_url}" alt="{title}">
+    </div>
+    """
+
+if not charts_html:
+    charts_html = '<p>생성된 차트가 없습니다.</p>'
 
 html_content = f"""<!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>오늘의 블로그 포스팅 초안</title>
+    <title>{post_title}</title>
     <style>
         body {{ font-family: 'Apple SD Gothic Neo', sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; line-height: 1.6; color: #333; }}
-        h1 {{ border-bottom: 2px solid #333; padding-bottom: 10px; }}
-        .content {{ white-space: pre-wrap; background: #f9f9f9; padding: 20px; border-radius: 8px; font-size: 16px; word-break: break-all; }}
-        img {{ max-width: 100%; height: auto; margin: 20px 0; border: 1px solid #ddd; border-radius: 4px; display: block; }}
+        h1 {{ border-bottom: 2px solid #333; padding-bottom: 10px; font-size: 24px; }}
+        .title-box {{ background: #eef5ff; border-left: 5px solid #2b7de9; padding: 15px; margin-bottom: 25px; border-radius: 4px; font-size: 18px; font-weight: bold; color: #1a498b; }}
+        .content {{ white-space: pre-wrap; background: #f9f9f9; padding: 20px; border-radius: 8px; font-size: 16px; word-break: break-all; margin-bottom: 30px; }}
+        .chart-box {{ margin: 30px 0; padding: 15px; border: 1px solid #e1e4e8; border-radius: 8px; background: #fff; }}
+        img {{ max-width: 100%; height: auto; display: block; margin: 0 auto; }}
     </style>
 </head>
 <body>
-    <h1>📊 오늘의 자동 생성 블로그 포스팅 초안</h1>
-    <p>이 페이지는 GitHub Actions에 의해 자동 생성되었습니다. 내용을 복사해서 블로그에 붙여넣으세요.</p>
+    <h1>📊 자동 생성 블로그 포스팅 미리보기</h1>
+    <p>아래 제목과 본문 텍스트를 복사해서 블로그에 올려주세요.</p>
     <hr>
     
-    <h3>📈 환율 차트</h3>
-    {chart_img_html}
+    <h3>📌 포스팅 제목</h3>
+    <div class="title-box">{post_title}</div>
 
     <h3>📝 본문 텍스트</h3>
-    <div class="content">{blog_text}</div>
+    <div class="content">{body_text}</div>
+
+    <hr>
+    <h2>📊 분석 차트 모음</h2>
+    {charts_html}
 </body>
 </html>
 """
