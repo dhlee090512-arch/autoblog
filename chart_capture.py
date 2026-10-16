@@ -66,7 +66,6 @@ def capture_finviz_map(filename="finviz_map.png"):
     print("[Playwright] Finviz 섹터 맵 정밀 캡처 중...")
     try:
         with sync_playwright() as p:
-            # 자동화 탐지 우회를 위한 브라우저 인자 설정
             browser = p.chromium.launch(
                 headless=True,
                 args=[
@@ -86,16 +85,11 @@ def capture_finviz_map(filename="finviz_map.png"):
             )
             
             page = context.new_page()
-            
-            # webdriver 감지 우회 스크립트 주입
             page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
             
             page.goto(url, timeout=60000)
-            
-            # 맵 로딩 및 보안 체크 대기
             page.wait_for_timeout(7000)
             
-            # 화면을 가리는 투어 팝업창 등 제거 시도
             try:
                 page.evaluate("""
                     const tourOverlays = document.querySelectorAll('.joyride-overlay, .joyride-tip__container, div[style*="z-index: 1000"]');
@@ -105,7 +99,6 @@ def capture_finviz_map(filename="finviz_map.png"):
             except:
                 pass
             
-            # #canvas-wrapper 요소만 정확히 타겟팅하여 캡처
             map_element = page.locator("#canvas-wrapper")
             
             if map_element.count() > 0:
