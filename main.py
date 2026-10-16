@@ -1,3 +1,7 @@
+import matplotlib
+matplotlib.use('Agg') # 화면 출력 없이 파일로 곧바로 저장하기 위한 설정
+import matplotlib.pyplot as plt
+
 import os
 import requests
 import yfinance as yf
@@ -5,6 +9,7 @@ import mplfinance as mpf
 from bs4 import BeautifulSoup
 from google import genai
 from google.genai import types
+
 
 # 1. 환경변수 로드
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
