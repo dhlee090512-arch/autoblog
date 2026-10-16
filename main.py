@@ -18,7 +18,6 @@ CHART_DIR = "assets"
 if not os.path.exists(CHART_DIR):
     os.makedirs(CHART_DIR)
 else:
-    # 실행할 때마다 기존 구버전 차트 이미지들을 싹 청소하여 용량 폭증 방지
     for f in os.listdir(CHART_DIR):
         if f.endswith(".png"):
             try:
@@ -42,7 +41,7 @@ def load_prompt(filename="prompt.txt"):
     with open(filename, "r", encoding="utf-8") as f:
         return f.read()
 
-# 3. 환율 전용 순수 라인 차트 (제목 제거 버전)
+# 3. [MTS 스타일] 환율 전용 순수 라인 차트 (제목 및 테두리 제거)
 def generate_fx_line_chart(ticker_symbol="KRW=X", filename="usdkrw_chart.png"):
     try:
         filepath = os.path.join(CHART_DIR, filename)
@@ -60,22 +59,29 @@ def generate_fx_line_chart(ticker_symbol="KRW=X", filename="usdkrw_chart.png"):
         else:
             return None
 
-        plt.figure(figsize=(10, 5))
-        plt.plot(close_data.index, close_data.values, color='#2b7de9', linewidth=2, label='USD/KRW')
-        plt.fill_between(close_data.index, close_data.values, close_data.min() * 0.95, color='#2b7de9', alpha=0.1)
+        plt.figure(figsize=(10, 4.5))
+        plt.plot(close_data.index, close_data.values, color='#2563eb', linewidth=2, label='USD/KRW')
+        plt.fill_between(close_data.index, close_data.values, close_data.min() * 0.98, color='#2563eb', alpha=0.06)
         
-        plt.grid(True, linestyle='--', alpha=0.5)
+        # MTS 스타일: 불필요한 박스 테두리(Spine) 제거
+        ax = plt.gca()
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['left'].set_color('#cbd5e1')
+        ax.spines['bottom'].set_color('#cbd5e1')
+        
+        plt.grid(True, linestyle='--', alpha=0.3, color='#94a3b8')
         plt.tight_layout()
-        plt.savefig(filepath, dpi=150)
+        plt.savefig(filepath, dpi=200)
         plt.close()
         
-        print(f"[차트생성 성공] 환율 라인 차트: {filepath}")
+        print(f"[차트생성 성공] MTS 환율 라인 차트: {filepath}")
         return f"{CHART_DIR}/{filename}"
     except Exception as e:
         print(f"[차트생성 오류] 환율 차트: {e}")
         return None
 
-# 4. 종목별 4단 프로 차트 생성 함수
+# 4. [MTS 스타일] 종목별 4단 프로 차트 (제목 제거 및 모던한 컬러 적용)
 def generate_stock_pro_chart(ticker_symbol, title_prefix, filename):
     try:
         filepath = os.path.join(CHART_DIR, filename)
@@ -110,36 +116,37 @@ def generate_stock_pro_chart(ticker_symbol, title_prefix, filename):
         df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
         df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
 
-        # 스타일 정의
+        # MTS 감성 컬러 스타일 정의 (토스/키움 영웅문 스타일 참고)
         mc = mpf.make_marketcolors(
-            up='#e12343', down='#1763e0',
+            up='#ef4444', down='#3b82f6',  # 트렌디한 레드 / 블루
             edge='inherit', wick='inherit',
-            volume={'up': '#e12343', 'down': '#1763e0'}
+            volume={'up': '#ef4444', 'down': '#3b82f6'}
         )
         style = mpf.make_mpf_style(
-            marketcolors=mc, gridstyle=':', gridcolor='#e6e8eb',
+            marketcolors=mc, gridstyle='--', gridcolor='#f1f5f9',
             facecolor='#ffffff', figcolor='#ffffff', y_on_right=True
         )
 
         addplots = [
-            mpf.make_addplot(df['RSI'], panel=2, color='#8e44ad', ylabel='RSI', secondary_y=False),
-            mpf.make_addplot([70]*len(df), panel=2, color='#e74c3c', linestyle='--', width=0.8),
-            mpf.make_addplot([30]*len(df), panel=2, color='#2980b9', linestyle='--', width=0.8),
+            mpf.make_addplot(df['RSI'], panel=2, color='#a855f7', ylabel='RSI', secondary_y=False),
+            mpf.make_addplot([70]*len(df), panel=2, color='#ef4444', linestyle=':', width=0.7),
+            mpf.make_addplot([30]*len(df), panel=2, color='#3b82f6', linestyle=':', width=0.7),
             
-            mpf.make_addplot(df['MACD'], panel=3, color='#2980b9', ylabel='MACD', secondary_y=False),
-            mpf.make_addplot(df['MACD_Signal'], panel=3, color='#e67e22', secondary_y=False),
-            mpf.make_addplot(df['MACD_Hist'], panel=3, type='bar', color='#27ae60', secondary_y=False),
+            mpf.make_addplot(df['MACD'], panel=3, color='#3b82f6', ylabel='MACD', secondary_y=False),
+            mpf.make_addplot(df['MACD_Signal'], panel=3, color='#f97316', secondary_y=False),
+            mpf.make_addplot(df['MACD_Hist'], panel=3, type='bar', color='#10b981', secondary_y=False),
         ]
 
+        # MTS 스타일: title을 빈 문자열("")로 주어 상단 제목 완전 제거
         mpf.plot(
             df, type='candle', mav=(5, 20, 60),
             volume=True, addplot=addplots,
-            panel_ratios=(4, 1.5, 1.5, 1.5),
-            title=f"\n{title_prefix} ({ticker_symbol})",
+            panel_ratios=(4, 1.2, 1.2, 1.2),
+            title="", 
             style=style, savefig=filepath,
             figratio=(12, 9), figscale=1.0
         )
-        print(f"[차트생성 성공] 프로 차트: {filepath}")
+        print(f"[차트생성 성공] MTS 프로 차트: {filepath}")
         return f"{CHART_DIR}/{filename}"
     except Exception as e:
         print(f"[차트생성 오류] {ticker_symbol} 프로 차트 생성 중 예외 발생: {e}")
@@ -256,10 +263,10 @@ html_content = f"""<!DOCTYPE html>
     <p>아래 제목과 본문을 드래그해서 그대로 블로그에 붙여넣으세요.</p>
     <hr>
     
-    ### 📌 포스팅 제목
+    <h3>📌 포스팅 제목</h3>
     <div class="title-box">{post_title}</div>
 
-    ### 📝 본문 텍스트 (차트 포함)
+    <h3>📝 본문 텍스트 (차트 포함)</h3>
     <div class="content">{formatted_body}</div>
 </body>
 </html>
