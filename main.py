@@ -13,9 +13,23 @@ from bs4 import BeautifulSoup
 from google import genai
 from google.genai import types
 
-GITHUB_PAGES_BASE_URL = "https://dhlee090512-arch.github.io/autoblog"
+# 1. 차트 전용 폴더(assets) 관리 및 초기화
+CHART_DIR = "assets"
+if not os.path.exists(CHART_DIR):
+    os.makedirs(CHART_DIR)
+else:
+    # 실행할 때마다 기존 구버전 차트 이미지들을 싹 청소하여 용량 폭증 방지
+    for f in os.listdir(CHART_DIR):
+        if f.endswith(".png"):
+            try:
+                os.remove(os.path.join(CHART_DIR, f))
+            except Exception as e:
+                print(f"[파일 삭제 오류 무시] {f}: {e}")
+    print("[청소 완료] 기존 구버전 차트 이미지들을 모두 정리했습니다.")
 
-# 1. 환경변수 및 API 클라이언트 초기화
+GITHUB_PAGES_BASE_URL = "https://dhlee090512-arch.github.io/autoblog/assets"
+
+# 2. 환경변수 및 API 클라이언트 초기화
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY가 설정되지 않았습니다.")
@@ -28,9 +42,10 @@ def load_prompt(filename="prompt.txt"):
     with open(filename, "r", encoding="utf-8") as f:
         return f.read()
 
-# 2. 환율 전용 순수 라인 차트 (제목 제거 버전)
+# 3. 환율 전용 순수 라인 차트 (제목 제거 버전)
 def generate_fx_line_chart(ticker_symbol="KRW=X", filename="usdkrw_chart.png"):
     try:
+        filepath = os.path.join(CHART_DIR, filename)
         print(f"[차트생성] 환율 데이터 다운로드 중 ({ticker_symbol})...")
         df = yf.download(ticker_symbol, period="1y", interval="1d", progress=False)
         if df.empty:
@@ -51,18 +66,19 @@ def generate_fx_line_chart(ticker_symbol="KRW=X", filename="usdkrw_chart.png"):
         
         plt.grid(True, linestyle='--', alpha=0.5)
         plt.tight_layout()
-        plt.savefig(filename, dpi=150)
+        plt.savefig(filepath, dpi=150)
         plt.close()
         
-        print(f"[차트생성 성공] 환율 라인 차트: {filename}")
-        return filename
+        print(f"[차트생성 성공] 환율 라인 차트: {filepath}")
+        return f"{CHART_DIR}/{filename}"
     except Exception as e:
         print(f"[차트생성 오류] 환율 차트: {e}")
         return None
 
-# 3. 종목별 4단 프로 차트 생성 함수
+# 4. 종목별 4단 프로 차트 생성 함수
 def generate_stock_pro_chart(ticker_symbol, title_prefix, filename):
     try:
+        filepath = os.path.join(CHART_DIR, filename)
         print(f"[차트생성] 종목 데이터 다운로드 중 ({ticker_symbol})...")
         df = yf.download(ticker_symbol, period="3mo", interval="1d", progress=False)
         if df.empty:
@@ -120,16 +136,16 @@ def generate_stock_pro_chart(ticker_symbol, title_prefix, filename):
             volume=True, addplot=addplots,
             panel_ratios=(4, 1.5, 1.5, 1.5),
             title=f"\n{title_prefix} ({ticker_symbol})",
-            style=style, savefig=filename,
+            style=style, savefig=filepath,
             figratio=(12, 9), figscale=1.0
         )
-        print(f"[차트생성 성공] 프로 차트: {filename}")
-        return filename
+        print(f"[차트생성 성공] 프로 차트: {filepath}")
+        return f"{CHART_DIR}/{filename}"
     except Exception as e:
         print(f"[차트생성 오류] {ticker_symbol} 프로 차트 생성 중 예외 발생: {e}")
         return None
 
-# 4. 대시보드 데이터 수집
+# 5. 대시보드 데이터 수집
 def fetch_dashboard_data(url):
     response = requests.get(url)
     response.raise_for_status()
@@ -140,8 +156,7 @@ print("국장 및 미장 대시보드 데이터 수집 중...")
 kr_raw = fetch_dashboard_data("https://dhlee090512-arch.github.io/report/index.html")
 us_raw = fetch_dashboard_data("https://dhlee090512-arch.github.io/report/us_index.html")
 
-# 5. [선행 작업] 주요 모니터링 대상 종목 차트들을 사전에 확실하게 무조건 생성!
-# (블로그에서 다뤄질 가능성이 높은 핵심 종목들을 파이썬이 미리 확정하여 차트로 구워둡니다)
+# 6. [선행 작업] 주요 모니터링 대상 종목 차트들을 사전에 확실하게 생성
 predefined_stocks = {
     "셀트리온": ("068270.KS", "celtrion_chart.png"),
     "LG에너지솔루션": ("373220.KS", "lg_energy_chart.png"),
@@ -153,14 +168,14 @@ predefined_stocks = {
 
 generated_charts_map = {}
 for stock_name, (ticker, fname) in predefined_stocks.items():
-    res_file = generate_stock_pro_chart(ticker, stock_name, fname)
-    if res_file:
-        generated_charts_map[stock_name] = res_file
+    res_path = generate_stock_pro_chart(ticker, stock_name, fname)
+    if res_path:
+        generated_charts_map[stock_name] = res_path
 
 # 환율 차트 사전 생성
-fx_chart = generate_fx_line_chart("KRW=X", "usdkrw_chart.png")
+fx_path = generate_fx_line_chart("KRW=X", "usdkrw_chart.png")
 
-# 6. Gemini API 호출 (폴백 모델 적용)
+# 7. Gemini API 호출 (폴백 모델 적용)
 system_instruction = load_prompt("prompt.txt")
 user_prompt = f"--- [국장 대시보드 Data] ---\n{kr_raw[:3500]}\n\n--- [미장 대시보드 Data] ---\n{us_raw[:3500]}"
 
@@ -193,7 +208,7 @@ if not response:
 
 raw_blog_text = response.text
 
-# 7. 제목 및 본문 파싱
+# 8. 제목 및 본문 파싱
 post_title = "오늘의 경제 주요 흐름 및 특징주 분석"
 body_text = raw_blog_text
 
@@ -206,22 +221,22 @@ for line in lines:
 
 formatted_body = body_text
 
-# 8. [경제 이슈] 아래에 환율 차트 인라인 삽입
-if "[경제 이슈]" in formatted_body and fx_chart:
-    fx_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{fx_chart}" alt="환율 차트"></div>'
+# 9. [경제 이슈] 아래에 환율 차트 인라인 삽입
+if "[경제 이슈]" in formatted_body and fx_path:
+    fx_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/usdkrw_chart.png" alt="환율 차트"></div>'
     formatted_body = formatted_body.replace("[경제 이슈]", f"[경제 이슈]\n{fx_html}")
 
-# 9. 사전에 생성된 종목 차트들을 본문 속 키워드 위치에 매칭하여 인라인 삽입
-for stock_name, fname in generated_charts_map.items():
+# 10. 사전에 생성된 종목 차트들을 본문 속 키워드 위치에 매칭하여 인라인 삽입
+for stock_name, path_str in generated_charts_map.items():
     if stock_name in formatted_body:
-        stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{fname}" alt="{stock_name} 차트"></div>'
-        # 본문 내 해당 종목 이름이 포함된 줄 뒤에 이미지 삽입
+        filename_only = os.path.basename(path_str)
+        stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{filename_only}" alt="{stock_name} 차트"></div>'
         pattern = rf"([^\n]*{stock_name}[^\n]*\n)"
         if re.search(pattern, formatted_body):
             formatted_body = re.sub(pattern, rf"\1{stock_html}\n", formatted_body, count=1)
             print(f"[매칭 성공] 본문에 '{stock_name}' 차트 삽입 완료")
 
-# 10. HTML 미리보기 파일 생성
+# 11. HTML 미리보기 파일 생성
 html_content = f"""<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -241,10 +256,10 @@ html_content = f"""<!DOCTYPE html>
     <p>아래 제목과 본문을 드래그해서 그대로 블로그에 붙여넣으세요.</p>
     <hr>
     
-    <h3>📌 포스팅 제목</h3>
+    ### 📌 포스팅 제목
     <div class="title-box">{post_title}</div>
 
-    <h3>📝 본문 텍스트 (차트 포함)</h3>
+    ### 📝 본문 텍스트 (차트 포함)
     <div class="content">{formatted_body}</div>
 </body>
 </html>
