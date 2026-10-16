@@ -31,10 +31,10 @@ def load_prompt(filename="prompt.txt"):
 # 2. 환율 전용 순수 라인 차트 (제목 제거 버전)
 def generate_fx_line_chart(ticker_symbol="KRW=X", filename="usdkrw_chart.png"):
     try:
-        print("환율 차트 데이터 다운로드 중...")
+        print(f"[차트생성] 환율 데이터 다운로드 중 ({ticker_symbol})...")
         df = yf.download(ticker_symbol, period="1y", interval="1d", progress=False)
         if df.empty:
-            print("환율 데이터를 가져오지 못했습니다.")
+            print("[차트생성] 환율 데이터를 가져오지 못했습니다.")
             return None
 
         if isinstance(df.columns, pd.MultiIndex):
@@ -49,25 +49,24 @@ def generate_fx_line_chart(ticker_symbol="KRW=X", filename="usdkrw_chart.png"):
         plt.plot(close_data.index, close_data.values, color='#2b7de9', linewidth=2, label='USD/KRW')
         plt.fill_between(close_data.index, close_data.values, close_data.min() * 0.95, color='#2b7de9', alpha=0.1)
         
-        # 제목 코드 완전 제거
         plt.grid(True, linestyle='--', alpha=0.5)
         plt.tight_layout()
         plt.savefig(filename, dpi=150)
         plt.close()
         
-        print(f"환율 라인 차트 생성 완료: {filename}")
+        print(f"[차트생성 성공] 환율 라인 차트: {filename}")
         return filename
     except Exception as e:
-        print(f"환율 차트 생성 오류: {e}")
+        print(f"[차트생성 오류] 환율 차트: {e}")
         return None
 
-# 3. 종목별 4단 프로 차트 (캔들 + 이평선 + 거래량 + RSI + MACD)
+# 3. 종목별 4단 프로 차트 생성 함수
 def generate_stock_pro_chart(ticker_symbol, title_prefix, filename):
     try:
-        print(f"{ticker_symbol} 프로 차트 데이터 다운로드 중...")
+        print(f"[차트생성] 종목 데이터 다운로드 중 ({ticker_symbol})...")
         df = yf.download(ticker_symbol, period="3mo", interval="1d", progress=False)
         if df.empty:
-            print(f"{ticker_symbol} 데이터를 가져오지 못했습니다.")
+            print(f"[차트생성] {ticker_symbol} 데이터를 가져오지 못했습니다.")
             return None
 
         if isinstance(df.columns, pd.MultiIndex):
@@ -79,7 +78,7 @@ def generate_stock_pro_chart(ticker_symbol, title_prefix, filename):
         df = df.dropna()
 
         if df.empty or len(df) < 26:
-            print(f"{ticker_symbol} 유효 데이터 부족.")
+            print(f"[차트생성] {ticker_symbol} 유효 데이터 부족 (행 개수: {len(df)})")
             return None
 
         # --- 보조지표 계산 (RSI, MACD) ---
@@ -124,10 +123,10 @@ def generate_stock_pro_chart(ticker_symbol, title_prefix, filename):
             style=style, savefig=filename,
             figratio=(12, 9), figscale=1.0
         )
-        print(f"프로 차트 이미지 생성 완료: {filename}")
+        print(f"[차트생성 성공] 프로 차트: {filename}")
         return filename
     except Exception as e:
-        print(f"{ticker_symbol} 프로 차트 생성 오류: {e}")
+        print(f"[차트생성 오류] {ticker_symbol} 프로 차트 생성 중 예외 발생: {e}")
         return None
 
 # 4. 대시보드 데이터 수집
@@ -141,7 +140,27 @@ print("국장 및 미장 대시보드 데이터 수집 중...")
 kr_raw = fetch_dashboard_data("https://dhlee090512-arch.github.io/report/index.html")
 us_raw = fetch_dashboard_data("https://dhlee090512-arch.github.io/report/us_index.html")
 
-# 5. Gemini API 호출 (폴백 모델 적용)
+# 5. [선행 작업] 주요 모니터링 대상 종목 차트들을 사전에 확실하게 무조건 생성!
+# (블로그에서 다뤄질 가능성이 높은 핵심 종목들을 파이썬이 미리 확정하여 차트로 구워둡니다)
+predefined_stocks = {
+    "셀트리온": ("068270.KS", "celtrion_chart.png"),
+    "LG에너지솔루션": ("373220.KS", "lg_energy_chart.png"),
+    "Bank of America": ("BAC", "bac_chart.png"),
+    "NVIDIA": ("NVDA", "nvidia_chart.png"),
+    "Tesla": ("TSLA", "tesla_chart.png"),
+    "두산에너빌리티": ("034020.KS", "doosan_chart.png")
+}
+
+generated_charts_map = {}
+for stock_name, (ticker, fname) in predefined_stocks.items():
+    res_file = generate_stock_pro_chart(ticker, stock_name, fname)
+    if res_file:
+        generated_charts_map[stock_name] = res_file
+
+# 환율 차트 사전 생성
+fx_chart = generate_fx_line_chart("KRW=X", "usdkrw_chart.png")
+
+# 6. Gemini API 호출 (폴백 모델 적용)
 system_instruction = load_prompt("prompt.txt")
 user_prompt = f"--- [국장 대시보드 Data] ---\n{kr_raw[:3500]}\n\n--- [미장 대시보드 Data] ---\n{us_raw[:3500]}"
 
@@ -174,7 +193,7 @@ if not response:
 
 raw_blog_text = response.text
 
-# 6. 제목 및 본문 파싱
+# 7. 제목 및 본문 파싱
 post_title = "오늘의 경제 주요 흐름 및 특징주 분석"
 body_text = raw_blog_text
 
@@ -185,53 +204,24 @@ for line in lines:
         body_text = "\n".join([l for l in lines if l != line]).strip()
         break
 
-# 7. 환율 차트 생성 (제목 제거됨)
-fx_chart = generate_fx_line_chart("KRW=X", "usdkrw_chart.png")
-
-# 8. 본문 내 '종목명 (코드/티커)' 패턴을 정규식으로 동적 추출
-# 예: 셀트리온 (068270), NVIDIA (NVDA)
-pattern = r'([가-힣A-Za-z\s]+)\s*\(([0-9A-Za-z.]+)\)'
-matches = re.findall(pattern, body_text)
-
 formatted_body = body_text
 
-# [경제 이슈] 아래에 환율 차트 삽입
+# 8. [경제 이슈] 아래에 환율 차트 인라인 삽입
 if "[경제 이슈]" in formatted_body and fx_chart:
     fx_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{fx_chart}" alt="환율 차트"></div>'
     formatted_body = formatted_body.replace("[경제 이슈]", f"[경제 이슈]\n{fx_html}")
 
-# 추출된 종목 코드를 백그라운드에서 yfinance 형식으로 변환 후 차트 생성 및 인라인 삽입
-seen_codes = set()
-for name, code in matches:
-    clean_name = name.strip()
-    if not clean_name or clean_name in ["제목", "경제 이슈", "특징주"]:
-        continue
-    
-    if code in seen_codes:
-        continue
-    seen_codes.add(code)
+# 9. 사전에 생성된 종목 차트들을 본문 속 키워드 위치에 매칭하여 인라인 삽입
+for stock_name, fname in generated_charts_map.items():
+    if stock_name in formatted_body:
+        stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{fname}" alt="{stock_name} 차트"></div>'
+        # 본문 내 해당 종목 이름이 포함된 줄 뒤에 이미지 삽입
+        pattern = rf"([^\n]*{stock_name}[^\n]*\n)"
+        if re.search(pattern, formatted_body):
+            formatted_body = re.sub(pattern, rf"\1{stock_html}\n", formatted_body, count=1)
+            print(f"[매칭 성공] 본문에 '{stock_name}' 차트 삽입 완료")
 
-    # 6자리 숫자인 경우 코스피(.KS) 기본 적용, 알파벳 티커는 그대로 사용
-    if code.isdigit() and len(code) == 6:
-        yf_ticker = f"{code}.KS"
-    else:
-        yf_ticker = code
-
-    filename = f"stock_{code.lower()}_chart.png"
-    chart_file = generate_stock_pro_chart(yf_ticker, clean_name, filename)
-
-    if chart_file:
-        stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{filename}" alt="{clean_name} 차트"></div>'
-        target_str = f"{name}({code})"
-        if target_str in formatted_body:
-            formatted_body = formatted_body.replace(target_str, f"{target_str}\n{stock_html}")
-        else:
-            # 띄어쓰기가 포함된 경우 대비
-            target_str_space = f"{name} ({code})"
-            if target_str_space in formatted_body:
-                formatted_body = formatted_body.replace(target_str_space, f"{target_str_space}\n{stock_html}")
-
-# 9. HTML 미리보기 파일 생성
+# 10. HTML 미리보기 파일 생성
 html_content = f"""<!DOCTYPE html>
 <html lang="ko">
 <head>
