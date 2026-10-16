@@ -8,10 +8,12 @@ import time
 import requests
 import pandas as pd
 import yfinance as yf
-import mplfinance as mpf
 from bs4 import BeautifulSoup
 from google import genai
 from google.genai import types
+
+# 방금 만든 캡처 모듈 임포트
+from chart_capture import capture_tradingview_chart
 
 # 1. 차트 전용 폴더(assets) 관리 및 초기화
 CHART_DIR = "assets"
@@ -41,7 +43,7 @@ def load_prompt(filename="prompt.txt"):
     with open(filename, "r", encoding="utf-8") as f:
         return f.read()
 
-# 3. [MTS 스타일] 환율 전용 순수 라인 차트 (제목 및 테두리 제거)
+# 3. [MTS 스타일] 환율 전용 순수 라인 차트 (yfinance 유지)
 def generate_fx_line_chart(ticker_symbol="KRW=X", filename="usdkrw_chart.png"):
     try:
         filepath = os.path.join(CHART_DIR, filename)
@@ -63,7 +65,6 @@ def generate_fx_line_chart(ticker_symbol="KRW=X", filename="usdkrw_chart.png"):
         plt.plot(close_data.index, close_data.values, color='#2563eb', linewidth=2, label='USD/KRW')
         plt.fill_between(close_data.index, close_data.values, close_data.min() * 0.98, color='#2563eb', alpha=0.06)
         
-        # MTS 스타일: 불필요한 박스 테두리(Spine) 제거
         ax = plt.gca()
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
@@ -81,76 +82,6 @@ def generate_fx_line_chart(ticker_symbol="KRW=X", filename="usdkrw_chart.png"):
         print(f"[차트생성 오류] 환율 차트: {e}")
         return None
 
-# 4. [MTS 스타일] 종목별 4단 프로 차트 (제목 제거 및 모던한 컬러 적용)
-def generate_stock_pro_chart(ticker_symbol, title_prefix, filename):
-    try:
-        filepath = os.path.join(CHART_DIR, filename)
-        print(f"[차트생성] 종목 데이터 다운로드 중 ({ticker_symbol})...")
-        df = yf.download(ticker_symbol, period="1y", interval="1d", progress=False)
-        if df.empty:
-            print(f"[차트생성] {ticker_symbol} 데이터를 가져오지 못했습니다.")
-            return None
-
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.droplevel(1)
-        
-        for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-        df = df.dropna()
-
-        if df.empty or len(df) < 26:
-            print(f"[차트생성] {ticker_symbol} 유효 데이터 부족 (행 개수: {len(df)})")
-            return None
-
-        # --- 보조지표 계산 (RSI, MACD) ---
-        delta = df['Close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / loss
-        df['RSI'] = 100 - (100 / (1 + rs))
-
-        exp1 = df['Close'].ewm(span=12, adjust=False).mean()
-        exp2 = df['Close'].ewm(span=26, adjust=False).mean()
-        df['MACD'] = exp1 - exp2
-        df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-        df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
-
-        # MTS 감성 컬러 스타일 정의
-        mc = mpf.make_marketcolors(
-            up='#ef4444', down='#3b82f6',
-            edge='inherit', wick='inherit',
-            volume={'up': '#ef4444', 'down': '#3b82f6'}
-        )
-        style = mpf.make_mpf_style(
-            marketcolors=mc, gridstyle='--', gridcolor='#f1f5f9',
-            facecolor='#ffffff', figcolor='#ffffff', y_on_right=True
-        )
-
-        addplots = [
-            mpf.make_addplot(df['RSI'], panel=2, color='#a855f7', ylabel='RSI', secondary_y=False),
-            mpf.make_addplot([70]*len(df), panel=2, color='#ef4444', linestyle=':', width=0.7),
-            mpf.make_addplot([30]*len(df), panel=2, color='#3b82f6', linestyle=':', width=0.7),
-            
-            mpf.make_addplot(df['MACD'], panel=3, color='#3b82f6', ylabel='MACD', secondary_y=False),
-            mpf.make_addplot(df['MACD_Signal'], panel=3, color='#f97316', secondary_y=False),
-            mpf.make_addplot(df['MACD_Hist'], panel=3, type='bar', color='#10b981', secondary_y=False),
-        ]
-
-        mpf.plot(
-            df, type='candle', mav=(5, 20, 60),
-            volume=True, addplot=addplots,
-            panel_ratios=(4, 1.2, 1.2, 1.2),
-            title="", 
-            style=style, savefig=filepath,
-            figratio=(12, 9), figscale=1.0
-        )
-        print(f"[차트생성 성공] MTS 프로 차트: {filepath}")
-        return f"{CHART_DIR}/{filename}"
-    except Exception as e:
-        print(f"[차트생성 오류] {ticker_symbol} 프로 차트 생성 중 예외 발생: {e}")
-        return None
-
 # 5. 대시보드 데이터 수집
 def fetch_dashboard_data(url):
     response = requests.get(url)
@@ -162,20 +93,21 @@ print("국장 및 미장 대시보드 데이터 수집 중...")
 kr_raw = fetch_dashboard_data("https://dhlee090512-arch.github.io/report/index.html")
 us_raw = fetch_dashboard_data("https://dhlee090512-arch.github.io/report/us_index.html")
 
-# 6. [선행 작업] 주요 모니터링 대상 종목 차트 및 네이버 증권 링크 정보 설정
+# 6. [선행 작업] 주요 모니터링 대상 종목 (트레이딩뷰 심볼, 파일명, 네이버증권 코드)
 predefined_stocks = {
-    "셀트리온": ("068270.KS", "celtrion_chart.png", "068270"),
-    "LG에너지솔루션": ("373220.KS", "lg_energy_chart.png", "373220"),
-    "Bank of America": ("BAC", "bac_chart.png", "BAC"),
-    "NVIDIA": ("NVDA", "nvidia_chart.png", "NVDA"),
-    "Tesla": ("TSLA", "tesla_chart.png", "TSLA"),
-    "두산에너빌리티": ("034020.KS", "doosan_chart.png", "034020")
+    "셀트리온": ("KRX:068270", "celtrion_chart.png", "068270"),
+    "LG에너지솔루션": ("KRX:373220", "lg_energy_chart.png", "373220"),
+    "Bank of America": ("NYSE:BAC", "bac_chart.png", "BAC"),
+    "NVIDIA": ("NASDAQ:NVDA", "nvidia_chart.png", "NVDA"),
+    "Tesla": ("NASDAQ:TSLA", "tesla_chart.png", "TSLA"),
+    "두산에너빌리티": ("KRX:034020", "doosan_chart.png", "034020")
 }
 
 generated_charts_map = {}
 for stock_name, info in predefined_stocks.items():
-    ticker, fname, naver_code = info
-    res_path = generate_stock_pro_chart(ticker, stock_name, fname)
+    tv_symbol, fname, naver_code = info
+    # yfinance 대신 트레이딩뷰 웹 캡처 함수 호출
+    res_path = capture_tradingview_chart(tv_symbol, fname)
     if res_path:
         naver_url = f"https://finance.naver.com/item/main.naver?code={naver_code}" if not naver_code.isalpha() else f"https://finance.naver.com/us/main.nhn?code={naver_code}"
         generated_charts_map[stock_name] = {
