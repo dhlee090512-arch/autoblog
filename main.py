@@ -1,6 +1,8 @@
 import matplotlib
 matplotlib.use('Agg') # 서버 환경용 설정
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+import matplotlib.dates as mdates
 
 import os
 import re
@@ -72,7 +74,7 @@ def generate_fx_line_chart(ticker_symbol="KRW=X", filename="usdkrw_chart.png"):
         
         plt.grid(True, linestyle='--', alpha=0.3, color='#94a3b8')
         plt.tight_layout()
-        plt.savefig(filepath, dpi=200)
+        plt.savefig(filepath, dpi=200, bbox_inches='tight', pad_inches=0.02)
         plt.close()
         
         print(f"[차트생성 성공] MTS 환율 라인 차트: {filepath}")
@@ -81,7 +83,7 @@ def generate_fx_line_chart(ticker_symbol="KRW=X", filename="usdkrw_chart.png"):
         print(f"[차트생성 오류] 환율 차트: {e}")
         return None
 
-# 4. [MTS 스타일] 종목별 4단 프로 차트 (제목 제거 및 모던한 컬러 적용)
+# 4. [MTS 스타일] 종목별 4단 프로 차트 (미니멀, 콤마, MA 없는 범례, 파스텔 MACD, X축 월 수평 정렬)
 def generate_stock_pro_chart(ticker_symbol, title_prefix, filename):
     try:
         filepath = os.path.join(CHART_DIR, filename)
@@ -103,7 +105,7 @@ def generate_stock_pro_chart(ticker_symbol, title_prefix, filename):
             print(f"[차트생성] {ticker_symbol} 유효 데이터 부족 (행 개수: {len(df)})")
             return None
 
-        # --- 보조지표 계산 (RSI, MACD) ---
+        # --- 보조지표 계산 (RSI, MACD 및 히스토그램 분할) ---
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -115,37 +117,83 @@ def generate_stock_pro_chart(ticker_symbol, title_prefix, filename):
         df['MACD'] = exp1 - exp2
         df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
         df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
+        
+        # MACD 위아래 파스텔톤 빨강/파랑 분리
+        df['MACD_Hist_Pos'] = df['MACD_Hist'].apply(lambda x: x if x > 0 else 0)
+        df['MACD_Hist_Neg'] = df['MACD_Hist'].apply(lambda x: x if x < 0 else 0)
 
-        # MTS 감성 컬러 스타일 정의 (토스/키움 영웅문 스타일 참고)
+        # MTS 감성 컬러 스타일 정의
         mc = mpf.make_marketcolors(
-            up='#ef4444', down='#3b82f6',  # 트렌디한 레드 / 블루
+            up='#ef4444', down='#3b82f6',  # 레드 / 블루
             edge='inherit', wick='inherit',
             volume={'up': '#ef4444', 'down': '#3b82f6'}
         )
         style = mpf.make_mpf_style(
             marketcolors=mc, gridstyle='--', gridcolor='#f1f5f9',
-            facecolor='#ffffff', figcolor='#ffffff', y_on_right=True
+            facecolor='#ffffff', figcolor='#ffffff', y_on_right=True,
+            rc={
+                'axes.spines.top': False,
+                'axes.spines.right': False,
+                'axes.spines.left': False,
+                'axes.spines.bottom': False,
+                'xtick.color': '#64748b',
+                'ytick.color': '#64748b',
+                'font.size': 9
+            }
         )
 
         addplots = [
-            mpf.make_addplot(df['RSI'], panel=2, color='#a855f7', ylabel='RSI', secondary_y=False),
-            mpf.make_addplot([70]*len(df), panel=2, color='#ef4444', linestyle=':', width=0.7),
-            mpf.make_addplot([30]*len(df), panel=2, color='#3b82f6', linestyle=':', width=0.7),
+            # RSI 및 기준선
+            mpf.make_addplot(df['RSI'], panel=2, color='#a855f7', secondary_y=False),
+            mpf.make_addplot([70]*len(df), panel=2, color='#ef4444', linestyle=':', width=0.6),
+            mpf.make_addplot([30]*len(df), panel=2, color='#3b82f6', linestyle=':', width=0.6),
             
-            mpf.make_addplot(df['MACD'], panel=3, color='#3b82f6', ylabel='MACD', secondary_y=False),
+            # MACD 선 및 파스텔톤 히스토그램 분할
+            mpf.make_addplot(df['MACD'], panel=3, color='#3b82f6', secondary_y=False),
             mpf.make_addplot(df['MACD_Signal'], panel=3, color='#f97316', secondary_y=False),
-            mpf.make_addplot(df['MACD_Hist'], panel=3, type='bar', color='#10b981', secondary_y=False),
+            mpf.make_addplot(df['MACD_Hist_Pos'], panel=3, type='bar', color='#fca5a5', secondary_y=False),
+            mpf.make_addplot(df['MACD_Hist_Neg'], panel=3, type='bar', color='#93c5fd', secondary_y=False),
         ]
 
-        # MTS 스타일: title을 빈 문자열("")로 주어 상단 제목 완전 제거
-        mpf.plot(
-            df, type='candle', mav=(5, 20, 60),
+        # MTS 스타일: 좌우 여백 밀착 제거 (xlim) 적용
+        fig, axes = mpf.plot(
+            df, type='candle', mav=(10, 20, 60, 120, 240),
             volume=True, addplot=addplots,
             panel_ratios=(4, 1.2, 1.2, 1.2),
             title="", 
-            style=style, savefig=filepath,
-            figratio=(12, 9), figscale=1.0
+            style=style, returnfig=True,
+            figratio=(12, 9), figscale=1.0,
+            xlim=(-0.5, len(df) - 0.5)
         )
+
+        for i, ax in enumerate(axes):
+            # 1. 가격 패널: 콤마 포맷팅 및 'MA' 없는 숫자 전용 범례 설정 (10, 20, 60, 120, 240)
+            if i == 0:
+                ax.grid(True, linestyle='--', alpha=0.4, color='#cbd5e1')
+                ax.yaxis.set_major_formatter(ticker.StrMethodFormatter('{x:,.0f}'))
+                
+                handles, _ = ax.get_legend_handles_labels()
+                if len(handles) >= 5:
+                    ax.legend(handles[:5], ['10', '20', '60', '120', '240'], 
+                              loc='upper left', fontsize=8, frameon=False, ncol=5)
+            
+            # 2. 거래량, RSI, MACD 패널: 세로축 눈금/라벨 완전 제거
+            if i in [2, 4, 6]:
+                ax.set_ylabel('')
+                ax.tick_params(labelright=False, labelleft=False, left=False, right=False)
+
+            # 3. 최하단 X축 날짜: 월 단위('%m월')로 고정하고 기울임 없이 수평(정자) 정렬
+            if i == 6:
+                ax.xaxis.set_major_locator(mdates.MonthLocator())
+                ax.xaxis.set_major_formatter(mdates.DateFormatter('%m월'))
+                for label in ax.get_xticklabels():
+                    label.set_rotation(0)
+                    label.set_horizontalalignment('center')
+
+        # 흰 공백 최소화 저장
+        fig.savefig(filepath, dpi=200, bbox_inches='tight', pad_inches=0.02)
+        plt.close(fig)
+
         print(f"[차트생성 성공] MTS 프로 차트: {filepath}")
         return f"{CHART_DIR}/{filename}"
     except Exception as e:
