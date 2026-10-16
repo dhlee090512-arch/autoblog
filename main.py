@@ -1,19 +1,18 @@
-import matplotlib
-matplotlib.use('Agg') # 서버 환경용 설정
-import matplotlib.pyplot as plt
-
 import os
 import re
 import time
 import requests
 import pandas as pd
-import yfinance as yf
 from bs4 import BeautifulSoup
 from google import genai
 from google.genai import types
 
-# 방금 만든 캡처 모듈 임포트
-from chart_capture import capture_tradingview_chart
+# 캡처 모듈 임포트
+from chart_capture import (
+    capture_tradingview_chart,
+    capture_fx_tradingview,
+    capture_finviz_map
+)
 
 # 1. 차트 전용 폴더(assets) 관리 및 초기화
 CHART_DIR = "assets"
@@ -43,45 +42,6 @@ def load_prompt(filename="prompt.txt"):
     with open(filename, "r", encoding="utf-8") as f:
         return f.read()
 
-# 3. [MTS 스타일] 환율 전용 순수 라인 차트 (yfinance 유지)
-def generate_fx_line_chart(ticker_symbol="KRW=X", filename="usdkrw_chart.png"):
-    try:
-        filepath = os.path.join(CHART_DIR, filename)
-        print(f"[차트생성] 환율 데이터 다운로드 중 ({ticker_symbol})...")
-        df = yf.download(ticker_symbol, period="1y", interval="1d", progress=False)
-        if df.empty:
-            print("[차트생성] 환율 데이터를 가져오지 못했습니다.")
-            return None
-
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.droplevel(1)
-        
-        if 'Close' in df.columns:
-            close_data = pd.to_numeric(df['Close'], errors='coerce').dropna()
-        else:
-            return None
-
-        plt.figure(figsize=(10, 4.5))
-        plt.plot(close_data.index, close_data.values, color='#2563eb', linewidth=2, label='USD/KRW')
-        plt.fill_between(close_data.index, close_data.values, close_data.min() * 0.98, color='#2563eb', alpha=0.06)
-        
-        ax = plt.gca()
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.spines['left'].set_color('#cbd5e1')
-        ax.spines['bottom'].set_color('#cbd5e1')
-        
-        plt.grid(True, linestyle='--', alpha=0.3, color='#94a3b8')
-        plt.tight_layout()
-        plt.savefig(filepath, dpi=200)
-        plt.close()
-        
-        print(f"[차트생성 성공] MTS 환율 라인 차트: {filepath}")
-        return f"{CHART_DIR}/{filename}"
-    except Exception as e:
-        print(f"[차트생성 오류] 환율 차트: {e}")
-        return None
-
 # 5. 대시보드 데이터 수집
 def fetch_dashboard_data(url):
     response = requests.get(url)
@@ -93,7 +53,7 @@ print("국장 및 미장 대시보드 데이터 수집 중...")
 kr_raw = fetch_dashboard_data("https://dhlee090512-arch.github.io/report/index.html")
 us_raw = fetch_dashboard_data("https://dhlee090512-arch.github.io/report/us_index.html")
 
-# 6. [선행 작업] 주요 모니터링 대상 종목 (트레이딩뷰 심볼, 파일명, 네이버증권 코드)
+# 6. [선행 작업] 주요 모니터링 대상 종목
 predefined_stocks = {
     "셀트리온": ("KRX:068270", "celtrion_chart.png", "068270"),
     "LG에너지솔루션": ("KRX:373220", "lg_energy_chart.png", "373220"),
@@ -106,7 +66,6 @@ predefined_stocks = {
 generated_charts_map = {}
 for stock_name, info in predefined_stocks.items():
     tv_symbol, fname, naver_code = info
-    # yfinance 대신 트레이딩뷰 웹 캡처 함수 호출
     res_path = capture_tradingview_chart(tv_symbol, fname)
     if res_path:
         naver_url = f"https://finance.naver.com/item/main.naver?code={naver_code}" if not naver_code.isalpha() else f"https://finance.naver.com/us/main.nhn?code={naver_code}"
@@ -115,8 +74,9 @@ for stock_name, info in predefined_stocks.items():
             "naver_url": naver_url
         }
 
-# 환율 차트 사전 생성
-fx_path = generate_fx_line_chart("KRW=X", "usdkrw_chart.png")
+# 경제 이슈용 환율 차트 및 Finviz 맵 사전 캡처
+fx_path = capture_fx_tradingview("usdkrw_chart.png")
+finviz_path = capture_finviz_map("finviz_map.png")
 
 # 7. Gemini API 호출 (폴백 모델 적용)
 system_instruction = load_prompt("prompt.txt")
@@ -164,17 +124,19 @@ for line in lines:
 
 formatted_body = body_text
 
-# 9. [경제 이슈] 아래에 M2, 경기선행지수 링크 및 환율 차트 인라인 삽입
-if "[경제 이슈]" in formatted_body and fx_path:
+# 9. [경제 이슈] 아래에 M2, 경기선행지수 링크, 환율 차트 및 Finviz 맵 인라인 삽입
+if "[경제 이슈]" in formatted_body:
     macro_links = (
         "원화 M2 통화량) https://tradingeconomics.com/south-korea/money-supply-m2\n"
         "한국 경기선행지수 ) https://tradingeconomics.com/south-korea/leading-economic-index\n"
         "달러 M2 통화량) https://tradingeconomics.com/united-states/money-supply-m2\n"
         "미국 경기선행지수 ) https://tradingeconomics.com/united-states/leading-economic-index\n"
     )
-    fx_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/usdkrw_chart.png" alt="환율 차트"></div>'
     
-    replacement_content = f"[경제 이슈]\n{macro_links}\n{fx_html}"
+    fx_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/usdkrw_chart.png" alt="환율 차트"></div>' if fx_path else ""
+    finviz_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/finviz_map.png" alt="Finviz 섹터 맵"></div>' if finviz_path else ""
+    
+    replacement_content = f"[경제 이슈]\n{macro_links}\n{fx_html}\n{finviz_html}"
     formatted_body = formatted_body.replace("[경제 이슈]", replacement_content)
 
 # 10. 사전에 생성된 종목 차트들과 네이버 증권 링크 URL을 본문 속 키워드 위치에 매칭하여 인라인 삽입
