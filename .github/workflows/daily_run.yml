@@ -33,11 +33,8 @@ jobs:
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.io"
         
-        # blog_preview.html 및 존재하는 이미지 파일만 안전하게 추가
-        git add blog_preview.html
-        if [ -f usdkrw_chart.png ]; then
-          git add usdkrw_chart.png
-        fi
+        # assets 폴더 내 구버전 삭제 및 신규 차트/HTML 변경 사항 모두 반영
+        git add -A
         
-        git commit -m "Auto-generate daily blog preview [skip ci]" || exit 0
+        git commit -m "Auto-update daily blog preview and clean charts [skip ci]" || exit 0
         git push
