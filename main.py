@@ -13,7 +13,7 @@ from chart_capture import (
     capture_finviz_map
 )
 
-# 1. 차트 전용 폴더(assets) 관리 및 초기화
+# 1. 차트 전용 폴더(assets) 관리 및 기존 파일 일괄 청소
 CHART_DIR = "assets"
 if not os.path.exists(CHART_DIR):
     os.makedirs(CHART_DIR)
@@ -27,6 +27,7 @@ else:
     print("[청소 완료] 기존 구버전 차트 이미지들을 모두 정리했습니다.")
 
 GITHUB_PAGES_BASE_URL = "https://dhlee090512-arch.github.io/autoblog/assets"
+current_timestamp = int(time.time()) # 캐시 방지용 타임스탬프
 
 # 2. 환경변수 및 API 클라이언트 초기화
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -52,7 +53,7 @@ print("국장 및 미장 대시보드 데이터 수집 중...")
 kr_raw = fetch_dashboard_data("https://dhlee090512-arch.github.io/report/index.html")
 us_raw = fetch_dashboard_data("https://dhlee090512-arch.github.io/report/us_index.html")
 
-# 6. [선행 작업] 주요 모니터링 대상 종목 (종목명, 트레이딩뷰 심볼, 파일명, 트레이딩뷰 URL용 심볼코드)
+# 6. [선행 작업] 주요 모니터링 대상 종목
 predefined_stocks = {
     "셀트리온": ("KRX:068270", "celtrion_chart.png", "KRX-068270"),
     "LG에너지솔루션": ("KRX:373220", "lg_energy_chart.png", "KRX-373220"),
@@ -67,7 +68,6 @@ for stock_name, info in predefined_stocks.items():
     tv_symbol, fname, tv_url_code = info
     res_path = capture_tradingview_chart(tv_symbol, fname)
     if res_path:
-        # 네이버 대신 깔끔한 트레이딩뷰 URL 생성 (예: https://www.tradingview.com/symbols/NASDAQ-NVDA/)
         tv_url = f"https://www.tradingview.com/symbols/{tv_url_code}/"
         generated_charts_map[stock_name] = {
             "path": res_path,
@@ -124,7 +124,7 @@ for line in lines:
 
 formatted_body = body_text
 
-# 9. [경제 이슈] 아래에 M2, 경기선행지수 링크, 환율 차트 및 Finviz 맵 인라인 삽입
+# 9. [경제 이슈] 아래에 M2, 경기선행지수 링크, 환율 차트 및 Finviz 맵 인라인 삽입 (캐시 방지 쿼리 스트링 포함)
 if "[경제 이슈]" in formatted_body:
     macro_links = (
         "원화 M2 통화량) https://tradingeconomics.com/south-korea/money-supply-m2\n"
@@ -133,18 +133,18 @@ if "[경제 이슈]" in formatted_body:
         "미국 경기선행지수 ) https://tradingeconomics.com/united-states/leading-economic-index\n"
     )
     
-    fx_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/usdkrw_chart.png" alt="환율 차트"></div>' if fx_path else ""
-    finviz_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/finviz_map.png" alt="Finviz 섹터 맵"></div>' if finviz_path else ""
+    fx_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/usdkrw_chart.png?t={current_timestamp}" alt="환율 차트"></div>' if fx_path else ""
+    finviz_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/finviz_map.png?t={current_timestamp}" alt="Finviz 섹터 맵"></div>' if finviz_path else ""
     
     replacement_content = f"[경제 이슈]\n{macro_links}\n{fx_html}\n{finviz_html}"
     formatted_body = formatted_body.replace("[경제 이슈]", replacement_content)
 
-# 10. 사전에 생성된 종목 차트들과 수식어 없는 순수 트레이딩뷰 URL을 본문 속 키워드 위치에 매칭하여 인라인 삽입
+# 10. 사전에 생성된 종목 차트들과 트레이딩뷰 URL을 본문 속 키워드 위치에 매칭하여 인라인 삽입 (캐시 방지 쿼리 스트링 포함)
 for stock_name, info in generated_charts_map.items():
     if stock_name in formatted_body:
         filename_only = os.path.basename(info["path"])
         link_text = f"\n{info['tv_url']}\n"
-        stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{filename_only}" alt="{stock_name} 차트"></div>'
+        stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{filename_only}?t={current_timestamp}" alt="{stock_name} 차트"></div>'
         
         pattern = rf"([^\n]*{stock_name}[^\n]*\n)"
         if re.search(pattern, formatted_body):
