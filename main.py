@@ -7,7 +7,6 @@ from bs4 import BeautifulSoup
 from google import genai
 from google.genai import types
 
-# 캡처 모듈 임포트
 from chart_capture import (
     capture_tradingview_chart,
     capture_fx_tradingview,
@@ -53,25 +52,26 @@ print("국장 및 미장 대시보드 데이터 수집 중...")
 kr_raw = fetch_dashboard_data("https://dhlee090512-arch.github.io/report/index.html")
 us_raw = fetch_dashboard_data("https://dhlee090512-arch.github.io/report/us_index.html")
 
-# 6. [선행 작업] 주요 모니터링 대상 종목
+# 6. [선행 작업] 주요 모니터링 대상 종목 (종목명, 트레이딩뷰 심볼, 파일명, 트레이딩뷰 URL용 심볼코드)
 predefined_stocks = {
-    "셀트리온": ("KRX:068270", "celtrion_chart.png", "068270"),
-    "LG에너지솔루션": ("KRX:373220", "lg_energy_chart.png", "373220"),
-    "Bank of America": ("NYSE:BAC", "bac_chart.png", "BAC"),
-    "NVIDIA": ("NASDAQ:NVDA", "nvidia_chart.png", "NVDA"),
-    "Tesla": ("NASDAQ:TSLA", "tesla_chart.png", "TSLA"),
-    "두산에너빌리티": ("KRX:034020", "doosan_chart.png", "034020")
+    "셀트리온": ("KRX:068270", "celtrion_chart.png", "KRX-068270"),
+    "LG에너지솔루션": ("KRX:373220", "lg_energy_chart.png", "KRX-373220"),
+    "Bank of America": ("NYSE:BAC", "bac_chart.png", "NYSE-BAC"),
+    "NVIDIA": ("NASDAQ:NVDA", "nvidia_chart.png", "NASDAQ-NVDA"),
+    "Tesla": ("NASDAQ:TSLA", "tesla_chart.png", "NASDAQ-TSLA"),
+    "두산에너빌리티": ("KRX:034020", "doosan_chart.png", "KRX-034020")
 }
 
 generated_charts_map = {}
 for stock_name, info in predefined_stocks.items():
-    tv_symbol, fname, naver_code = info
+    tv_symbol, fname, tv_url_code = info
     res_path = capture_tradingview_chart(tv_symbol, fname)
     if res_path:
-        naver_url = f"https://finance.naver.com/item/main.naver?code={naver_code}" if not naver_code.isalpha() else f"https://finance.naver.com/us/main.nhn?code={naver_code}"
+        # 네이버 대신 깔끔한 트레이딩뷰 URL 생성 (예: https://www.tradingview.com/symbols/NASDAQ-NVDA/)
+        tv_url = f"https://www.tradingview.com/symbols/{tv_url_code}/"
         generated_charts_map[stock_name] = {
             "path": res_path,
-            "naver_url": naver_url
+            "tv_url": tv_url
         }
 
 # 경제 이슈용 환율 차트 및 Finviz 맵 사전 캡처
@@ -139,17 +139,17 @@ if "[경제 이슈]" in formatted_body:
     replacement_content = f"[경제 이슈]\n{macro_links}\n{fx_html}\n{finviz_html}"
     formatted_body = formatted_body.replace("[경제 이슈]", replacement_content)
 
-# 10. 사전에 생성된 종목 차트들과 네이버 증권 링크 URL을 본문 속 키워드 위치에 매칭하여 인라인 삽입
+# 10. 사전에 생성된 종목 차트들과 수식어 없는 순수 트레이딩뷰 URL을 본문 속 키워드 위치에 매칭하여 인라인 삽입
 for stock_name, info in generated_charts_map.items():
     if stock_name in formatted_body:
         filename_only = os.path.basename(info["path"])
-        link_text = f"\n👉 네이버 증권 링크: {info['naver_url']}\n"
+        link_text = f"\n{info['tv_url']}\n"
         stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{filename_only}" alt="{stock_name} 차트"></div>'
         
         pattern = rf"([^\n]*{stock_name}[^\n]*\n)"
         if re.search(pattern, formatted_body):
             formatted_body = re.sub(pattern, rf"\1{stock_html}{link_text}\n", formatted_body, count=1)
-            print(f"[매칭 성공] 본문에 '{stock_name}' 차트 및 네이버 증권 URL 삽입 완료")
+            print(f"[매칭 성공] 본문에 '{stock_name}' 차트 및 트레이딩뷰 URL 삽입 완료")
 
 # 11. HTML 미리보기 파일 생성
 html_content = f"""<!DOCTYPE html>
