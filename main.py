@@ -86,7 +86,6 @@ def generate_stock_pro_chart(ticker_symbol, title_prefix, filename):
     try:
         filepath = os.path.join(CHART_DIR, filename)
         print(f"[차트생성] 종목 데이터 다운로드 중 ({ticker_symbol})...")
-        # 데이터가 부족해 차트 생성이 누락되는 문제를 방지하기 위해 period를 1y로 넉넉하게 설정
         df = yf.download(ticker_symbol, period="1y", interval="1d", progress=False)
         if df.empty:
             print(f"[차트생성] {ticker_symbol} 데이터를 가져오지 못했습니다.")
@@ -117,9 +116,9 @@ def generate_stock_pro_chart(ticker_symbol, title_prefix, filename):
         df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
         df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
 
-        # MTS 감성 컬러 스타일 정의 (토스/키움 영웅문 스타일 참고)
+        # MTS 감성 컬러 스타일 정의
         mc = mpf.make_marketcolors(
-            up='#ef4444', down='#3b82f6',  # 트렌디한 레드 / 블루
+            up='#ef4444', down='#3b82f6',
             edge='inherit', wick='inherit',
             volume={'up': '#ef4444', 'down': '#3b82f6'}
         )
@@ -138,7 +137,6 @@ def generate_stock_pro_chart(ticker_symbol, title_prefix, filename):
             mpf.make_addplot(df['MACD_Hist'], panel=3, type='bar', color='#10b981', secondary_y=False),
         ]
 
-        # MTS 스타일: title을 빈 문자열("")로 주어 상단 제목 완전 제거 및 안정적인 5, 20, 60 이동평균선 적용
         mpf.plot(
             df, type='candle', mav=(5, 20, 60),
             volume=True, addplot=addplots,
@@ -164,21 +162,26 @@ print("국장 및 미장 대시보드 데이터 수집 중...")
 kr_raw = fetch_dashboard_data("https://dhlee090512-arch.github.io/report/index.html")
 us_raw = fetch_dashboard_data("https://dhlee090512-arch.github.io/report/us_index.html")
 
-# 6. [선행 작업] 주요 모니터링 대상 종목 차트들을 사전에 확실하게 생성
+# 6. [선행 작업] 주요 모니터링 대상 종목 차트 및 네이버 증권 링크 정보 설정
 predefined_stocks = {
-    "셀트리온": ("068270.KS", "celtrion_chart.png"),
-    "LG에너지솔루션": ("373220.KS", "lg_energy_chart.png"),
-    "Bank of America": ("BAC", "bac_chart.png"),
-    "NVIDIA": ("NVDA", "nvidia_chart.png"),
-    "Tesla": ("TSLA", "tesla_chart.png"),
-    "두산에너빌리티": ("034020.KS", "doosan_chart.png")
+    "셀트리온": ("068270.KS", "celtrion_chart.png", "068270"),
+    "LG에너지솔루션": ("373220.KS", "lg_energy_chart.png", "373220"),
+    "Bank of America": ("BAC", "bac_chart.png", "BAC"),
+    "NVIDIA": ("NVDA", "nvidia_chart.png", "NVDA"),
+    "Tesla": ("TSLA", "tesla_chart.png", "TSLA"),
+    "두산에너빌리티": ("034020.KS", "doosan_chart.png", "034020")
 }
 
 generated_charts_map = {}
-for stock_name, (ticker, fname) in predefined_stocks.items():
+for stock_name, info in predefined_stocks.items():
+    ticker, fname, naver_code = info
     res_path = generate_stock_pro_chart(ticker, stock_name, fname)
     if res_path:
-        generated_charts_map[stock_name] = res_path
+        naver_url = f"https://finance.naver.com/item/main.naver?code={naver_code}" if not naver_code.isalpha() else f"https://finance.naver.com/us/main.nhn?code={naver_code}"
+        generated_charts_map[stock_name] = {
+            "path": res_path,
+            "naver_url": naver_url
+        }
 
 # 환율 차트 사전 생성
 fx_path = generate_fx_line_chart("KRW=X", "usdkrw_chart.png")
@@ -229,20 +232,30 @@ for line in lines:
 
 formatted_body = body_text
 
-# 9. [경제 이슈] 아래에 환율 차트 인라인 삽입
+# 9. [경제 이슈] 아래에 M2, 경기선행지수 링크 및 환율 차트 인라인 삽입
 if "[경제 이슈]" in formatted_body and fx_path:
+    macro_links = (
+        "원화 M2 통화량) https://tradingeconomics.com/south-korea/money-supply-m2\n"
+        "한국 경기선행지수 ) https://tradingeconomics.com/south-korea/leading-economic-index\n"
+        "달러 M2 통화량) https://tradingeconomics.com/united-states/money-supply-m2\n"
+        "미국 경기선행지수 ) https://tradingeconomics.com/united-states/leading-economic-index\n"
+    )
     fx_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/usdkrw_chart.png" alt="환율 차트"></div>'
-    formatted_body = formatted_body.replace("[경제 이슈]", f"[경제 이슈]\n{fx_html}")
+    
+    replacement_content = f"[경제 이슈]\n{macro_links}\n{fx_html}"
+    formatted_body = formatted_body.replace("[경제 이슈]", replacement_content)
 
-# 10. 사전에 생성된 종목 차트들을 본문 속 키워드 위치에 매칭하여 인라인 삽입
-for stock_name, path_str in generated_charts_map.items():
+# 10. 사전에 생성된 종목 차트들과 네이버 증권 링크 URL을 본문 속 키워드 위치에 매칭하여 인라인 삽입
+for stock_name, info in generated_charts_map.items():
     if stock_name in formatted_body:
-        filename_only = os.path.basename(path_str)
+        filename_only = os.path.basename(info["path"])
+        link_text = f"\n👉 네이버 증권 링크: {info['naver_url']}\n"
         stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{filename_only}" alt="{stock_name} 차트"></div>'
+        
         pattern = rf"([^\n]*{stock_name}[^\n]*\n)"
         if re.search(pattern, formatted_body):
-            formatted_body = re.sub(pattern, rf"\1{stock_html}\n", formatted_body, count=1)
-            print(f"[매칭 성공] 본문에 '{stock_name}' 차트 삽입 완료")
+            formatted_body = re.sub(pattern, rf"\1{stock_html}{link_text}\n", formatted_body, count=1)
+            print(f"[매칭 성공] 본문에 '{stock_name}' 차트 및 네이버 증권 URL 삽입 완료")
 
 # 11. HTML 미리보기 파일 생성
 html_content = f"""<!DOCTYPE html>
@@ -267,7 +280,7 @@ html_content = f"""<!DOCTYPE html>
     <h3>📌 포스팅 제목</h3>
     <div class="title-box">{post_title}</div>
 
-    <h3>📝 본문 텍스트 (차트 포함)</h3>
+    <h3>📝 본문 텍스트 (차트 및 거시경제 링크 포함)</h3>
     <div class="content">{formatted_body}</div>
 </body>
 </html>
