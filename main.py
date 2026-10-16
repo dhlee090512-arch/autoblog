@@ -1,15 +1,15 @@
 import matplotlib
-matplotlib.use('Agg') # 화면 출력 없이 파일로 곧바로 저장하기 위한 설정
+matplotlib.use('Agg') # 화면 출력 없는 서버 환경용 설정
 import matplotlib.pyplot as plt
 
 import os
+import time
 import requests
 import yfinance as yf
 import mplfinance as mpf
 from bs4 import BeautifulSoup
 from google import genai
 from google.genai import types
-
 
 # 1. 환경변수 로드
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -59,7 +59,7 @@ print("국장 및 미장 대시보드 데이터 수집 중...")
 kr_raw = fetch_dashboard_data("https://dhlee090512-arch.github.io/report/index.html")
 us_raw = fetch_dashboard_data("https://dhlee090512-arch.github.io/report/us_index.html")
 
-# 4. Gemini API 호출 및 글 생성
+# 4. Gemini API 호출 (재시도 로직 포함)
 system_instruction = """
 너는 개인 주식/트레이딩 블로거야.
 입력된 국장/미장 대시보드 데이터 및 환율/매크로 브리핑을 바탕으로 블로그 포스팅 초안을 작성해줘.
@@ -77,15 +77,29 @@ system_instruction = """
 
 user_prompt = f"--- [국장 대시보드 Data] ---\n{kr_raw[:3500]}\n\n--- [미장 대시보드 Data] ---\n{us_raw[:3500]}"
 
-print("Gemini API로 블로그 포스팅 생성 중 (gemini-3.5-flash-lite)...")
-response = client.models.generate_content(
-    model="gemini-3.5-flash-lite",
-    contents=user_prompt,
-    config=types.GenerateContentConfig(
-        system_instruction=system_instruction,
-        temperature=0.75,
-    ),
-)
+max_retries = 3
+retry_delay = 10  # 실패 시 대기 시간 (초)
+response = None
+
+for attempt in range(1, max_retries + 1):
+    try:
+        print(f"Gemini API 호출 중 (시도 {attempt}/{max_retries})...")
+        response = client.models.generate_content(
+            model="gemini-3.5-flash-lite",
+            contents=user_prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=0.75,
+            ),
+        )
+        break  # 성공 시 반복문 탈출
+    except Exception as e:
+        print(f"API 호출 실패 (에러: {e})")
+        if attempt < max_retries:
+            print(f"{retry_delay}초 후 재시도합니다...")
+            time.sleep(retry_delay)
+        else:
+            raise RuntimeError("Gemini API 호출이 최대 재시도 횟수를 초과하여 실패했습니다.")
 
 blog_text = response.text
 chart_file = generate_usd_krw_chart()
