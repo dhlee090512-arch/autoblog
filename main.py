@@ -26,11 +26,11 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 # 2. 외부 프롬프트 파일 로드 함수
 def load_prompt(filename="prompt.txt"):
     if not os.path.exists(filename):
-        raise FileNotFoundError(f"{filename} 파일을 찾을 수 없습니다. 레포지토리에 prompt.txt가 있는지 확인해 주세요.")
+        raise FileNotFoundError(f"{filename} 파일을 찾을 수 없습니다.")
     with open(filename, "r", encoding="utf-8") as f:
         return f.read()
 
-# 3. 데이터 타입 오류 방지 및 안전한 차트 생성 헬퍼 함수
+# 3. 네이버/트레이딩뷰 스타일 (캔들+이평선+거래량+RSI) 차트 생성 함수
 def safe_download_and_plot(ticker_symbol, title_prefix, filename):
     try:
         print(f"{ticker_symbol} 차트 데이터 다운로드 중...")
@@ -48,23 +48,54 @@ def safe_download_and_plot(ticker_symbol, title_prefix, filename):
                 df[col] = pd.to_numeric(df[col], errors='coerce')
         df = df.dropna()
 
-        if df.empty:
-            print(f"{ticker_symbol} 유효한 수치 데이터가 없습니다.")
+        if df.empty or len(df) < 14:
+            print(f"{ticker_symbol} 유효 데이터 부족.")
             return None
 
-        mc = mpf.make_marketcolors(up='red', down='blue', edge='inherit', wick='inherit', volume='in')
-        style = mpf.make_mpf_style(marketcolors=mc, gridstyle='--', y_on_right=False)
+        # --- RSI(14) 보조지표 계산 ---
+        delta = df['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        df['RSI'] = 100 - (100 / (1 + rs))
+
+        # --- 네이버 증권 / 트레이딩뷰 룩앤필 색상 정의 ---
+        mc = mpf.make_marketcolors(
+            up='#e12343',      # 네이버 특유의 선명한 빨간 양봉
+            down='#1763e0',    # 선명한 파란 음봉
+            edge='inherit',
+            wick='inherit',
+            volume={'up': '#e12343', 'down': '#1763e0'}
+        )
+
+        style = mpf.make_mpf_style(
+            marketcolors=mc,
+            gridstyle=':',              # 연한 점선 그리드
+            gridcolor='#e6e8eb',
+            facecolor='#ffffff',        # 흰색 배경
+            figcolor='#ffffff',
+            y_on_right=True             # 트레이딩뷰/국내 증권사처럼 우측 가격 축
+        )
+
+        # --- 패널 구성 (패널 0: 캔들/이평선, 패널 1: 거래량, 패널 2: RSI) ---
+        addplots = [
+            mpf.make_addplot(df['RSI'], panel=2, color='#8e44ad', ylabel='RSI', secondary_y=False),
+            mpf.make_addplot([70]*len(df), panel=2, color='#e74c3c', linestyle='--', width=0.8),
+            mpf.make_addplot([30]*len(df), panel=2, color='#2980b9', linestyle='--', width=0.8),
+        ]
 
         mpf.plot(
             df,
             type='candle',
-            mav=(20, 60),
-            volume=True,
+            mav=(5, 20, 60),            # 5일, 20일, 60일 이동평균선
+            volume=True,                # 거래량 패널
+            addplot=addplots,
+            panel_ratios=(5, 2, 2),     # 캔들:거래량:RSI 영역 비율
             title=f"\n{title_prefix} ({ticker_symbol})",
             style=style,
             savefig=filename,
-            figratio=(12, 6),
-            figscale=1.0
+            figratio=(12, 8),
+            figscale=1.1
         )
         print(f"차트 이미지 생성 완료: {filename}")
         return filename
@@ -113,8 +144,13 @@ for attempt in range(1, max_retries + 1):
 
 raw_blog_text = response.text
 
-# 6. 제목 및 본문 파싱 로직
-post_title = "오늘의 블로그 포스팅"
+# 6. 차트 생성
+fx_chart = safe_download_and_plot("KRW=X", "USD/KRW Exchange Rate", "usdkrw_chart.png")
+celtrion_chart = safe_download_and_plot("068270.KS", "Celltrion", "celtrion_chart.png")
+bac_chart = safe_download_and_plot("BAC", "Bank of America", "bac_chart.png")
+
+# 7. 제목 파싱 및 본문 중간중간에 차트 이미지 동적 매핑
+post_title = "오늘의 경제 주요 흐름 및 특징주 분석"
 body_text = raw_blog_text
 
 lines = raw_blog_text.strip().split("\n")
@@ -124,62 +160,54 @@ for line in lines:
         body_text = "\n".join([l for l in lines if l != line]).strip()
         break
 
-# 7. 환율 및 특징주 차트 이미지 다운로드
-charts = {}
-fx_chart = safe_download_and_plot("KRW=X", "USD/KRW Exchange Rate", "usdkrw_chart.png")
-if fx_chart:
-    charts["환율 차트"] = fx_chart
+# 태그 매핑
+chart_imgs = {
+    "fx": f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{fx_chart}" alt="환율 차트"></div>' if fx_chart else '',
+    "celtrion": f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{celtrion_chart}" alt="셀트리온 차트"></div>' if celtrion_chart else '',
+    "bac": f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{bac_chart}" alt="BAC 차트"></div>' if bac_chart else '',
+}
 
-celtrion_chart = safe_download_and_plot("068270.KS", "Celltrion", "celtrion_chart.png")
-if celtrion_chart:
-    charts["셀트리온 차트"] = celtrion_chart
+# 텍스트 섹션 중간에 이미지 삽입
+formatted_body = body_text
 
-bac_chart = safe_download_and_plot("BAC", "Bank of America", "bac_chart.png")
-if bac_chart:
-    charts["Bank of America 차트"] = bac_chart
+# [경제 이슈] 섹션 다음에 환율 차트 삽입
+if "[경제 이슈]" in formatted_body and fx_chart:
+    formatted_body = formatted_body.replace("[경제 이슈]", f"[경제 이슈]\n{chart_imgs['fx']}")
+
+# 종목별 서술 다음에 해당 차트 삽입 (셀트리온, BAC 예시)
+if "셀트리온" in formatted_body and celtrion_chart:
+    # 셀트리온 문단 뒤쪽에 이미지 배치되도록 처리
+    formatted_body = re.sub(r"(1\.\s*셀트리온[^\n]*\n)", r"\1" + chart_imgs['celtrion'] + "\n", formatted_body)
+
+if ("Bank of America" in formatted_body or "BAC" in formatted_body) and bac_chart:
+    formatted_body = re.sub(r"(\d+\.\s*(?:Bank of America|BAC)[^\n]*\n)", r"\1" + chart_imgs['bac'] + "\n", formatted_body)
+
 
 # 8. HTML 미리보기 파일 생성
-charts_html = ""
-for title, filename in charts.items():
-    img_url = f"{GITHUB_PAGES_BASE_URL}/{filename}"
-    charts_html += f"""
-    <div class="chart-box">
-        <h3>📈 {title}</h3>
-        <img src="{img_url}" alt="{title}">
-    </div>
-    """
-
-if not charts_html:
-    charts_html = '<p>생성된 차트가 없습니다.</p>'
-
 html_content = f"""<!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
     <title>{post_title}</title>
     <style>
-        body {{ font-family: 'Apple SD Gothic Neo', sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; line-height: 1.6; color: #333; }}
+        body {{ font-family: 'Apple SD Gothic Neo', sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; line-height: 1.7; color: #333; }}
         h1 {{ border-bottom: 2px solid #333; padding-bottom: 10px; font-size: 24px; }}
         .title-box {{ background: #eef5ff; border-left: 5px solid #2b7de9; padding: 15px; margin-bottom: 25px; border-radius: 4px; font-size: 18px; font-weight: bold; color: #1a498b; }}
-        .content {{ white-space: pre-wrap; background: #f9f9f9; padding: 20px; border-radius: 8px; font-size: 16px; word-break: break-all; margin-bottom: 30px; }}
-        .chart-box {{ margin: 30px 0; padding: 15px; border: 1px solid #e1e4e8; border-radius: 8px; background: #fff; }}
-        img {{ max-width: 100%; height: auto; display: block; margin: 0 auto; }}
+        .content {{ white-space: pre-wrap; background: #fafafa; padding: 25px; border-radius: 8px; font-size: 16px; word-break: break-all; border: 1px solid #eee; }}
+        .img-box {{ margin: 20px 0; text-align: center; }}
+        img {{ max-width: 100%; height: auto; border: 1px solid #e1e4e8; border-radius: 6px; display: block; margin: 0 auto; }}
     </style>
 </head>
 <body>
     <h1>📊 자동 생성 블로그 포스팅 미리보기</h1>
-    <p>아래 제목과 본문 텍스트를 복사해서 블로그에 올려주세요.</p>
+    <p>아래 제목과 본문을 드래그해서 그대로 블로그에 붙여넣으세요.</p>
     <hr>
     
     <h3>📌 포스팅 제목</h3>
     <div class="title-box">{post_title}</div>
 
-    <h3>📝 본문 텍스트</h3>
-    <div class="content">{body_text}</div>
-
-    <hr>
-    <h2>📊 분석 차트 모음</h2>
-    {charts_html}
+    <h3>📝 본문 텍스트 (차트 포함)</h3>
+    <div class="content">{formatted_body}</div>
 </body>
 </html>
 """
