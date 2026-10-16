@@ -28,10 +28,10 @@ def load_prompt(filename="prompt.txt"):
     with open(filename, "r", encoding="utf-8") as f:
         return f.read()
 
-# 2. 환율 전용 깔끔한 라인 차트 생성 함수 (첫 번째 사진 스타일)
+# 2. 환율 전용 순수 라인 차트 (제목 제거 버전)
 def generate_fx_line_chart(ticker_symbol="KRW=X", filename="usdkrw_chart.png"):
     try:
-        print(f"환율 차트 데이터 다운로드 중...")
+        print("환율 차트 데이터 다운로드 중...")
         df = yf.download(ticker_symbol, period="1y", interval="1d", progress=False)
         if df.empty:
             print("환율 데이터를 가져오지 못했습니다.")
@@ -49,7 +49,7 @@ def generate_fx_line_chart(ticker_symbol="KRW=X", filename="usdkrw_chart.png"):
         plt.plot(close_data.index, close_data.values, color='#2b7de9', linewidth=2, label='USD/KRW')
         plt.fill_between(close_data.index, close_data.values, close_data.min() * 0.95, color='#2b7de9', alpha=0.1)
         
-        plt.title("USD/KRW Exchange Rate (1 Year)", fontsize=14, fontweight='bold', pad=15)
+        # 제목 코드 완전 제거
         plt.grid(True, linestyle='--', alpha=0.5)
         plt.tight_layout()
         plt.savefig(filename, dpi=150)
@@ -61,7 +61,7 @@ def generate_fx_line_chart(ticker_symbol="KRW=X", filename="usdkrw_chart.png"):
         print(f"환율 차트 생성 오류: {e}")
         return None
 
-# 3. 종목별 4단 고품질 차트 생성 함수 (캔들 + 이평선 + 거래량 + RSI + MACD / 두 번째 사진 스타일)
+# 3. 종목별 4단 프로 차트 (캔들 + 이평선 + 거래량 + RSI + MACD)
 def generate_stock_pro_chart(ticker_symbol, title_prefix, filename):
     try:
         print(f"{ticker_symbol} 프로 차트 데이터 다운로드 중...")
@@ -106,7 +106,6 @@ def generate_stock_pro_chart(ticker_symbol, title_prefix, filename):
             facecolor='#ffffff', figcolor='#ffffff', y_on_right=True
         )
 
-        # 추가 패널 지표 (RSI, MACD)
         addplots = [
             mpf.make_addplot(df['RSI'], panel=2, color='#8e44ad', ylabel='RSI', secondary_y=False),
             mpf.make_addplot([70]*len(df), panel=2, color='#e74c3c', linestyle='--', width=0.8),
@@ -186,25 +185,14 @@ for line in lines:
         body_text = "\n".join([l for l in lines if l != line]).strip()
         break
 
-# 7. 차트 생성 실행 (환율 + 주요 종목들)
+# 7. 환율 차트 생성 (제목 제거됨)
 fx_chart = generate_fx_line_chart("KRW=X", "usdkrw_chart.png")
 
-# 주요 특징주 사전 매핑 딕셔너리 (필요시 확장 가능)
-stock_tickers = {
-    "셀트리온": ("068270.KS", "Celltrion", "celtrion_chart.png"),
-    "LG에너지솔루션": ("373220.KS", "LG Energy Solution", "lg_energy_chart.png"),
-    "Bank of America": ("BAC", "Bank of America", "bac_chart.png"),
-    "NVIDIA": ("NVDA", "Nvidia", "nvidia_chart.png")
-}
+# 8. 본문 내 '종목명 (코드/티커)' 패턴을 정규식으로 동적 추출
+# 예: 셀트리온 (068270), NVIDIA (NVDA)
+pattern = r'([가-힣A-Za-z\s]+)\s*\(([0-9A-Za-z.]+)\)'
+matches = re.findall(pattern, body_text)
 
-generated_stock_charts = {}
-for keyword, (ticker, title, fname) in stock_tickers.items():
-    if keyword in body_text or ticker in body_text:
-        c_file = generate_stock_pro_chart(ticker, title, fname)
-        if c_file:
-            generated_stock_charts[keyword] = c_file
-
-# 8. 본문 텍스트 내 각 섹션 및 종목 아래에 차트 동적 인라인 삽입
 formatted_body = body_text
 
 # [경제 이슈] 아래에 환율 차트 삽입
@@ -212,17 +200,36 @@ if "[경제 이슈]" in formatted_body and fx_chart:
     fx_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{fx_chart}" alt="환율 차트"></div>'
     formatted_body = formatted_body.replace("[경제 이슈]", f"[경제 이슈]\n{fx_html}")
 
-# 각 종목 번호/이름 아래에 해당 프로 차트 삽입
-for keyword, fname in generated_stock_charts.items():
-    stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{fname}" alt="{keyword} 차트"></div>'
-    # 정규식을 이용해 해당 종목 언급된 줄 바로 뒤에 차트 HTML 삽입
-    pattern = rf"(\d+\.\s*{keyword}[^\n]*\n)"
-    if re.search(pattern, formatted_body):
-        formatted_body = re.sub(pattern, rf"\1{stock_html}\n", formatted_body)
+# 추출된 종목 코드를 백그라운드에서 yfinance 형식으로 변환 후 차트 생성 및 인라인 삽입
+seen_codes = set()
+for name, code in matches:
+    clean_name = name.strip()
+    if not clean_name or clean_name in ["제목", "경제 이슈", "특징주"]:
+        continue
+    
+    if code in seen_codes:
+        continue
+    seen_codes.add(code)
+
+    # 6자리 숫자인 경우 코스피(.KS) 기본 적용, 알파벳 티커는 그대로 사용
+    if code.isdigit() and len(code) == 6:
+        yf_ticker = f"{code}.KS"
     else:
-        # 키워드만 있는 경우 대처
-        pattern_sub = rf"({keyword}[^\n]*\n)"
-        formatted_body = re.sub(pattern_sub, rf"\1{stock_html}\n", formatted_body, count=1)
+        yf_ticker = code
+
+    filename = f"stock_{code.lower()}_chart.png"
+    chart_file = generate_stock_pro_chart(yf_ticker, clean_name, filename)
+
+    if chart_file:
+        stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{filename}" alt="{clean_name} 차트"></div>'
+        target_str = f"{name}({code})"
+        if target_str in formatted_body:
+            formatted_body = formatted_body.replace(target_str, f"{target_str}\n{stock_html}")
+        else:
+            # 띄어쓰기가 포함된 경우 대비
+            target_str_space = f"{name} ({code})"
+            if target_str_space in formatted_body:
+                formatted_body = formatted_body.replace(target_str_space, f"{target_str_space}\n{stock_html}")
 
 # 9. HTML 미리보기 파일 생성
 html_content = f"""<!DOCTYPE html>
