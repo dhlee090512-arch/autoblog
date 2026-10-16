@@ -33,7 +33,7 @@ def generate_usd_krw_chart():
     chart_filename = "usdkrw_chart.png"
     try:
         print("원/달러 환율 차트 생성 중...")
-        df = yf.download("KRW=X", period="3m", interval="1d")
+        df = yf.download("KRW=X", period="3mo", interval="1d")
         if df.empty:
             print("환율 데이터를 가져오지 못했습니다.")
             return None
