@@ -12,18 +12,19 @@ from chart_capture import (
     capture_finviz_map
 )
 
-# 1. 차트 전용 폴더(assets) 관리 및 기존 파일 일괄 청소
+# 1. 차트 전용 폴더(assets) 관리 및 구버전 파일 완전 초기화
 CHART_DIR = "assets"
 if not os.path.exists(CHART_DIR):
     os.makedirs(CHART_DIR)
 else:
     for f in os.listdir(CHART_DIR):
-        if f.endswith(".png"):
+        file_path = os.path.join(CHART_DIR, f)
+        if os.path.isfile(file_path):
             try:
-                os.remove(os.path.join(CHART_DIR, f))
+                os.remove(file_path)
+                print(f"[삭제 완료] 이전 파일 제거: {f}")
             except Exception as e:
-                print(f"[파일 삭제 오류 무시] {f}: {e}")
-    print("[청소 완료] 기존 구버전 차트 이미지들을 정리했습니다.")
+                print(f"[파일 삭제 실패] {f}: {e}")
 
 GITHUB_PAGES_BASE_URL = "https://dhlee090512-arch.github.io/autoblog/assets"
 current_timestamp = int(time.time()) # 캐시 방지용 타임스탬프
@@ -133,45 +134,37 @@ for line in lines:
 
 formatted_body = blog_text
 
-# 7. 플레이스홀더 치환 (사진 및 링크)
-
-# (1) 환율 및 Finviz 플레이스홀더 치환
+# 7. 플레이스홀더 정밀 치환 (환율 및 Finviz)
 fx_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/usdkrw_chart.png?t={current_timestamp}" alt="환율 차트"></div>' if fx_path else ""
 finviz_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/finviz_map.png?t={current_timestamp}" alt="Finviz 섹터 맵"></div>' if finviz_path else ""
 
-formatted_body = re.sub(r'\(환율 사진\)', fx_html, formatted_body)
-formatted_body = re.sub(r'\(finviz 사진\)', finviz_html, formatted_body)
+# 대소문자나 띄어쓰기 오차를 방지하기 위해 유연하게 매칭
+formatted_body = re.sub(r'\(환율\s*사진\)', fx_html, formatted_body, flags=re.IGNORECASE)
+formatted_body = re.sub(r'\(finviz\s*사진\)', finviz_html, formatted_body, flags=re.IGNORECASE)
 
-# (2) 각 종목별 (종목 차트), (종목 트레이딩뷰 url) 플레이스홀더 치환
+# 8. 각 종목별 플레이스홀더 치환 (순서 밀림 방지를 위한 안전 분할 방식)
 for stock_name, info in generated_charts_map.items():
     if stock_name in formatted_body:
         filename_only = os.path.basename(info["path"])
         stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{filename_only}?t={current_timestamp}" alt="{stock_name} 차트"></div>'
         tv_url_text = info["tv_url"]
 
-        # 종목 섹션 블록을 찾아서 해당 플레이스홀더 치환
-        # 종목명 뒤 나오는 첫 번째 (종목 차트)와 (종목 트레이딩뷰 url) 변경
-        pattern = rf"({re.escape(stock_name)}[\s\S]*?)(?=\n\n\d+\.|\n\n\[|$)"
-        def replace_stock_placeholders(match):
-            block = match.group(1)
-            block = re.sub(r'\(종목 차트\)', stock_html, block, count=1)
-            block = re.sub(r'\(종목 트레이딩뷰 url\)', tv_url_text, block, count=1)
-            return block
+        # 해당 종목 키워드가 포함된 블록을 찾아 내부의 플레이스홀더만 정확히 치환
+        # (마지막 종목까지 누락 없이 모두 처리되도록 분할 범위 확장)
+        parts = formatted_body.split(stock_name)
+        if len(parts) > 1:
+            # 첫 번째 등장하는 해당 종목 섹션 파트에만 차트와 URL 삽입
+            target_section = parts[1]
+            target_section = re.sub(r'\(종목\s*차트\)', stock_html, target_section, count=1, flags=re.IGNORECASE)
+            target_section = re.sub(r'\(종목\s*트레이딩뷰\s*url\)', tv_url_text, target_section, count=1, flags=re.IGNORECASE)
+            
+            # 만약 플레이스홀더가 아예 적혀있지 않았다면 종목명 바로 아래에 강제 삽입
+            if "(종목 차트)" not in target_section and stock_html not in target_section:
+                target_section = f"\n{stock_html}\n{tv_url_text}\n" + target_section
+                
+            formatted_body = stock_name + target_section + "".join(parts[2:])
 
-        formatted_body = re.sub(pattern, replace_stock_placeholders, formatted_body, count=1)
-
-# 만약 Gemini가 플레이스홀더를 안 적고 누락했을 경우를 대비한 안전 치환 (종목명 바로 아래에 치환)
-for stock_name, info in generated_charts_map.items():
-    if stock_name in formatted_body and "(종목 차트)" not in formatted_body:
-        filename_only = os.path.basename(info["path"])
-        stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{filename_only}?t={current_timestamp}" alt="{stock_name} 차트"></div>'
-        tv_url_text = info["tv_url"]
-        
-        # 종목 제목 바로 뒤에 이미지와 URL 삽입
-        pattern = rf"([^\n]*{re.escape(stock_name)}[^\n]*\n)"
-        formatted_body = re.sub(pattern, rf"\1{stock_html}\n{tv_url_text}\n", formatted_body, count=1)
-
-# 8. HTML 미리보기 파일 생성
+# 9. HTML 미리보기 파일 생성
 html_content = f"""<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -192,7 +185,7 @@ html_content = f"""<!DOCTYPE html>
     <hr>
     
     <h3>📌 포스팅 제목</h3>
-    <div class="title-box">{post_title}</div>
+    <div class="title-box">{post_title}</h3>
 
     <h3>📝 본문 텍스트 (차트 및 거시경제 링크 포함)</h3>
     <div class="content">{formatted_body}</div>
