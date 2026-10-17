@@ -42,29 +42,56 @@ def load_prompt(filename="prompt.txt"):
     with open(filename, "r", encoding="utf-8") as f:
         return f.read()
 
-# 5. 대시보드 데이터 수집
-def fetch_dashboard_data(url):
-    response = requests.get(url)
-    response.raise_for_status()
-    soup = BeautifulSoup(response.text, 'html.parser')
-    return soup.get_text(separator="\n", strip=True)
+# 3. 대시보드 크롤링 및 종목 정보 동적 추출 함수
+def fetch_dashboard_and_extract_stocks(kr_url, us_url):
+    """
+    국장 및 미장 대시보드 페이지에서 텍스트와 종목 정보를 동적으로 추출합니다.
+    """
+    headers = {"User-Agent": "Mozilla/5.0"}
+    
+    # 국장 대시보드
+    res_kr = requests.get(kr_url, headers=headers)
+    res_kr.raise_for_status()
+    soup_kr = BeautifulSoup(res_kr.text, 'html.parser')
+    kr_raw_text = soup_kr.get_text(separator="\n", strip=True)
+    
+    # 미장 대시보드
+    res_us = requests.get(us_url, headers=headers)
+    res_us.raise_for_status()
+    soup_us = BeautifulSoup(res_us.text, 'html.parser')
+    us_raw_text = soup_us.get_text(separator="\n", strip=True)
+    
+    extracted_stocks = {}
 
-print("국장 및 미장 대시보드 데이터 수집 중...")
-kr_raw = fetch_dashboard_data("https://dhlee090512-arch.github.io/report/index.html")
-us_raw = fetch_dashboard_data("https://dhlee090512-arch.github.io/report/us_index.html")
+    # HTML 태그 요소나 패턴 기반 종목 추출 (예: '종목명(코드)' 또는 테이블/카드 영역)
+    # 1) 국장 6자리 숫 티커 패턴 추출
+    kr_matches = re.findall(r'([가-힣A-Za-z0-9\s]+)[\s\(\[\{]*(\d{6})[\)\]\}]*', kr_raw_text)
+    for name, code in kr_matches:
+        clean_name = name.strip()
+        if len(clean_name) > 1 and clean_name not in ["코스피", "코스닥"]:
+            safe_fname = f"chart_{code}.png"
+            extracted_stocks[clean_name] = (f"KRX:{code}", safe_fname, f"KRX-{code}")
 
-# 6. [선행 작업] 주요 모니터링 대상 종목
-predefined_stocks = {
-    "셀트리온": ("KRX:068270", "celtrion_chart.png", "KRX-068270"),
-    "LG에너지솔루션": ("KRX:373220", "lg_energy_chart.png", "KRX-373220"),
-    "Bank of America": ("NYSE:BAC", "bac_chart.png", "NYSE-BAC"),
-    "NVIDIA": ("NASDAQ:NVDA", "nvidia_chart.png", "NASDAQ-NVDA"),
-    "Tesla": ("NASDAQ:TSLA", "tesla_chart.png", "NASDAQ-TSLA"),
-    "두산에너빌리티": ("KRX:034020", "doosan_chart.png", "KRX-034020")
-}
+    # 2) 미장 티커 패턴 추출 (대문자 알파벳 2~5자리)
+    us_matches = re.findall(r'([가-힣A-Za-z0-9\s]+)[\s\(\[\{]+([A-Z]{2,5})[\)\]\}]+', us_raw_text)
+    for name, ticker in us_matches:
+        clean_name = name.strip()
+        if len(clean_name) > 1 and clean_name not in ["USD", "KRW", "NYSE", "NASDAQ", "INDEX"]:
+            safe_fname = f"chart_{ticker}.png"
+            extracted_stocks[clean_name] = (f"NASDAQ:{ticker}", safe_fname, f"NASDAQ-{ticker}")
 
+    print(f"[동적 종목 추출] 총 {len(extracted_stocks)}개 종목 파싱 완료: {list(extracted_stocks.keys())}")
+    return kr_raw_text, us_raw_text, extracted_stocks
+
+print("국장 및 미장 대시보드 데이터 수집 및 종목 동적 추출 중...")
+kr_url = "https://dhlee090512-arch.github.io/report/index.html"
+us_url = "https://dhlee090512-arch.github.io/report/us_index.html"
+
+kr_raw, us_raw, dynamic_stocks = fetch_dashboard_and_extract_stocks(kr_url, us_url)
+
+# 4. 동적으로 파싱된 종목들의 차트 캡처 수행
 generated_charts_map = {}
-for stock_name, info in predefined_stocks.items():
+for stock_name, info in dynamic_stocks.items():
     tv_symbol, fname, tv_url_code = info
     res_path = capture_tradingview_chart(tv_symbol, fname)
     if res_path:
@@ -74,11 +101,11 @@ for stock_name, info in predefined_stocks.items():
             "tv_url": tv_url
         }
 
-# 경제 이슈용 환율 차트 및 Finviz 맵 사전 캡처
+# 거시경제용 환율 차트 및 Finviz 맵 사전 캡처
 fx_path = capture_fx_tradingview("usdkrw_chart.png")
 finviz_path = capture_finviz_map("finviz_map.png")
 
-# 7. Gemini API 호출 (폴백 모델 적용)
+# 5. Gemini API 호출 (폴백 모델 적용)
 system_instruction = load_prompt("prompt.txt")
 user_prompt = f"--- [국장 대시보드 Data] ---\n{kr_raw[:3500]}\n\n--- [미장 대시보드 Data] ---\n{us_raw[:3500]}"
 
@@ -111,7 +138,7 @@ if not response:
 
 raw_blog_text = response.text
 
-# 8. 제목 및 본문 파싱
+# 6. 제목 및 본문 파싱
 post_title = "오늘의 경제 주요 흐름 및 특징주 분석"
 body_text = raw_blog_text
 
@@ -124,7 +151,7 @@ for line in lines:
 
 formatted_body = body_text
 
-# 9. [경제 이슈] 요청한 양식 구조대로 텍스트 및 이미지 배치
+# 7. [경제 이슈] 요청한 규격 구조 적용
 if "[경제 이슈]" in formatted_body:
     fx_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/usdkrw_chart.png?t={current_timestamp}" alt="환율 차트"></div>' if fx_path else ""
     finviz_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/finviz_map.png?t={current_timestamp}" alt="Finviz 섹터 맵"></div>' if finviz_path else ""
@@ -146,7 +173,7 @@ if "[경제 이슈]" in formatted_body:
     )
     formatted_body = formatted_body.replace("[경제 이슈]", replacement_content)
 
-# 10. 사전에 생성된 종목 차트들과 트레이딩뷰 URL을 본문 속 키워드 위치에 매칭하여 인라인 삽입
+# 8. 동적으로 매칭된 종목 차트 및 트레이딩뷰 URL을 본문에 매칭 인라인 삽입
 for stock_name, info in generated_charts_map.items():
     if stock_name in formatted_body:
         filename_only = os.path.basename(info["path"])
@@ -158,7 +185,7 @@ for stock_name, info in generated_charts_map.items():
             formatted_body = re.sub(pattern, rf"\1{stock_html}{link_text}\n", formatted_body, count=1)
             print(f"[매칭 성공] 본문에 '{stock_name}' 차트 및 트레이딩뷰 URL 삽입 완료")
 
-# 11. HTML 미리보기 파일 생성
+# 9. HTML 미리보기 파일 생성
 html_content = f"""<!DOCTYPE html>
 <html lang="ko">
 <head>
