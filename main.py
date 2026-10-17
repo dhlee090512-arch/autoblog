@@ -124,22 +124,29 @@ for line in lines:
 
 formatted_body = body_text
 
-# 9. [경제 이슈] 아래에 M2, 경기선행지수 링크, 환율 차트 및 Finviz 맵 인라인 삽입 (캐시 방지 쿼리 스트링 포함)
+# 9. [경제 이슈] 요청한 양식 구조대로 텍스트 및 이미지 배치
 if "[경제 이슈]" in formatted_body:
-    macro_links = (
-        "원화 M2 통화량) https://tradingeconomics.com/south-korea/money-supply-m2\n"
-        "한국 경기선행지수 ) https://tradingeconomics.com/south-korea/leading-economic-index\n"
-        "달러 M2 통화량) https://tradingeconomics.com/united-states/money-supply-m2\n"
-        "미국 경기선행지수 ) https://tradingeconomics.com/united-states/leading-economic-index\n"
-    )
-    
     fx_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/usdkrw_chart.png?t={current_timestamp}" alt="환율 차트"></div>' if fx_path else ""
     finviz_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/finviz_map.png?t={current_timestamp}" alt="Finviz 섹터 맵"></div>' if finviz_path else ""
     
-    replacement_content = f"[경제 이슈]\n{macro_links}\n{fx_html}\n{finviz_html}"
+    replacement_content = (
+        "[경제 이슈]\n\n"
+        "원화 M2 통화량) https://tradingeconomics.com/south-korea/money-supply-m2\n"
+        "한국 경기선행지수 ) https://tradingeconomics.com/south-korea/leading-economic-index\n"
+        "달러 M2 통화량) https://tradingeconomics.com/united-states/money-supply-m2\n"
+        "미국 경기선행지수 ) https://tradingeconomics.com/united-states/leading-economic-index\n\n"
+        "통화량과 경기선행지수는 위 사이트에서 확인 가능합니다. 꾸준히 우상향 추세인 것을 확인할 수 있습니다.\n\n"
+        "원 달러 환율)\n"
+        f"{fx_html}\n"
+        "원 달러 환율은 현재 최근 n년 중 거의 최저 수준을 기록하고 있습니다.\n\n"
+        f"{finviz_html}\n"
+        "전반적인 테마 흐름을 확인하면 기술주들은 약세를 보이고 전통적인 소비재나 경기방어주들이 강세를 보이는 것을 확인할 수 있습니다.\n\n"
+        "위 내용을 바탕으로 거시경제 상황을 정리하자면 국내 원화 통화량이나 경기선행지수는 꾸준히 우상향하고 있지만, 전반적인 시장 분위기는 단단하지 못한 모습입니다. 특히 미장 쪽은 인플레이션 우려가 다시 고개를 들고 있고, 월별 옵션 만기일 같은 파생상품 이슈까지 겹치면서 대형 기술주들이 조정을 세게 맞았거든요. 연준의 금리 인하 속도에 대한 불확실성도 커져서 투자심리가 살짝 위축된 상태입니다.\n\n"
+        "이럴 때에는 무지성으로 추격 매수하기보다는 차트에서 바닥을 잘 다지거나 지지 라인을 지켜주는 종목 위주로 짧게 스윙 접근하는 게 유리한 것 같아요. 변동성이 워낙 크니까 위아래로 먹으려다가 쳐발리기보다는 손절가 잡고 철저하게 대응하는 트레이딩 관점이 안전할 것으로 보입니다."
+    )
     formatted_body = formatted_body.replace("[경제 이슈]", replacement_content)
 
-# 10. 사전에 생성된 종목 차트들과 트레이딩뷰 URL을 본문 속 키워드 위치에 매칭하여 인라인 삽입 (캐시 방지 쿼리 스트링 포함)
+# 10. 사전에 생성된 종목 차트들과 트레이딩뷰 URL을 본문 속 키워드 위치에 매칭하여 인라인 삽입
 for stock_name, info in generated_charts_map.items():
     if stock_name in formatted_body:
         filename_only = os.path.basename(info["path"])
