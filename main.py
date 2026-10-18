@@ -163,23 +163,33 @@ if "[경제 이슈]" in formatted_body:
         elif "기술주" in formatted_body:
             formatted_body = re.sub(r'([^\n]*기술주[^\n]*\n)', rf'{finviz_html}\n\1', formatted_body, count=1)
 
-# 9. [특징주 분석] 종목별 차트 및 트레이딩뷰 URL 위치 기반 강제 주입
+# 9. [특징주 분석] 종목별 차트 및 트레이딩뷰 URL 1:1 정확 매칭 주입
 for stock_name, info in generated_charts_map.items():
+    # 본문에 해당 종목명이 존재하는 경우에만 정확히 해당 위치 아래에 주입
     if stock_name in formatted_body:
         filename_only = os.path.basename(info["path"])
         stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{filename_only}?t={current_timestamp}" alt="{stock_name} 차트"></div>'
         tv_url_text = info["tv_url"]
 
-        # 1) 플레이스홀더 치환
-        if re.search(r'\(종목\s*차트\)', formatted_body, re.IGNORECASE):
-            formatted_body = re.sub(r'\(종목\s*차트\)', stock_html, formatted_body, count=1, flags=re.IGNORECASE)
-        if re.search(r'\(종목\s*트레이딩뷰\s*url\)', formatted_body, re.IGNORECASE):
-            formatted_body = re.sub(r'\(종목\s*트레이딩뷰\s*url\)', tv_url_text, formatted_body, count=1, flags=re.IGNORECASE)
-
-        # 2) 플레이스홀더 생략 시: 종목 소제목 아래 강제 삽입
+        # 종목 소제목(예: "1. Nvidia", "Nvidia", "엔비디아" 등) 패턴 찾기
+        pattern = rf"([^\n]*{re.escape(stock_name)}[^\n]*\n)"
+        
+        # 해당 종목명 바로 아랫줄에 위치한 플레이스홀더를 고유 차트/URL로 치환하거나, 플레이스홀더가 없으면 바로 삽입
         if stock_html not in formatted_body:
-            pattern = rf"([^\n]*{re.escape(stock_name)}[^\n]*\n)"
-            formatted_body = re.sub(pattern, rf"\1{stock_html}\n{tv_url_text}\n", formatted_body, count=1)
+            # 해당 종목 단락 내에 있는 플레이스홀더를 해당 종목 차트로 특정 치환
+            def replace_stock_assets(match):
+                block = match.group(0)
+                # 플레이스홀더 치환
+                block = re.sub(r'\(종목\s*차트\)', stock_html, block, count=1, flags=re.IGNORECASE)
+                block = re.sub(r'\(종목\s*트레이딩뷰\s*url\)', tv_url_text, block, count=1, flags=re.IGNORECASE)
+                # 만약 플레이스홀더가 없었다면 종목명 바로 다음 줄에 차트 + URL 삽입
+                if stock_html not in block:
+                    lines = block.split('\n', 1)
+                    block = lines[0] + '\n' + stock_html + '\n' + tv_url_text + '\n' + (lines[1] if len(lines) > 1 else '')
+                return block
+
+            # 종목명이 포함된 단락/줄 기준으로 스코프를 줄여 치환 진행
+            formatted_body = re.sub(rf"({re.escape(stock_name)}[^\n]*\n(?:[^\n]*\n){{0,4}})", replace_stock_assets, formatted_body, count=1)
 
 # 10. HTML 미리보기 파일 생성
 html_content = f"""<!DOCTYPE html>
