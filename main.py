@@ -1,8 +1,3 @@
-새롭게 정리된 `prompt.txt`의 레이아웃 구조(지표 링크 → 환율 차트 → 환율 동향 → Finviz 맵 → 테마 동향 → 종합 정리)를 파이썬이 정확하게 보장할 수 있도록 위치 주입 로직을 정교하게 보완한 **`main.py` 전체 코드**입니다.
-
-이 코드를 복사해서 `main.py`에 적용해 주세요.
-
-```python
 import os
 import re
 import time
@@ -219,5 +214,3 @@ with open("blog_preview.html", "w", encoding="utf-8") as f:
     f.write(html_content)
 
 print("blog_preview.html 생성 완료!")
-
-```
