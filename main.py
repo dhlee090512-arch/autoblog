@@ -1,3 +1,8 @@
+새롭게 정리된 `prompt.txt`의 레이아웃 구조(지표 링크 → 환율 차트 → 환율 동향 → Finviz 맵 → 테마 동향 → 종합 정리)를 파이썬이 정확하게 보장할 수 있도록 위치 주입 로직을 정교하게 보완한 **`main.py` 전체 코드**입니다.
+
+이 코드를 복사해서 `main.py`에 적용해 주세요.
+
+```python
 import os
 import re
 import time
@@ -142,26 +147,26 @@ formatted_body = blog_text
 fx_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/usdkrw_chart.png?t={current_timestamp}" alt="환율 차트"></div>' if fx_path else ""
 finviz_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/finviz_map.png?t={current_timestamp}" alt="Finviz 섹터 맵"></div>' if finviz_path else ""
 
-# 8. [경제 이슈] 파트 이미지 강제 주입 (플레이스홀더가 없더라도 위치 탐색)
+# 8. [경제 이슈] 파트 이미지 배치 정교화 (의도한 순서 보장)
 if "[경제 이슈]" in formatted_body:
-    # 1) 기존 플레이스홀더가 존재할 경우 치환
-    if re.search(r'\(환율\s*사진\)', formatted_body, re.IGNORECASE):
-        formatted_body = re.sub(r'\(환율\s*사진\)', fx_html, formatted_body, flags=re.IGNORECASE)
-    if re.search(r'\(finviz\s*사진\)', formatted_body, re.IGNORECASE):
-        formatted_body = re.sub(r'\(finviz\s*사진\)', finviz_html, formatted_body, flags=re.IGNORECASE)
+    # 1) 플레이스홀더 치환 우선 적용
+    formatted_body = re.sub(r'\(환율\s*사진\)', fx_html, formatted_body, flags=re.IGNORECASE)
+    formatted_body = re.sub(r'\(finviz\s*사진\)', finviz_html, formatted_body, flags=re.IGNORECASE)
 
-    # 2) 플레이스홀더가 없을 경우 : 문맥 위치를 파악하여 직접 꽂아 넣기
+    # 2) 플레이스홀더 생략 시 문맥 위치 강제 주입
+    # 환율 차트: 안내 문구("우상향 추세입니다.") 직후 또는 환율 언급 단락 바로 위
     if fx_html and fx_html not in formatted_body:
-        if "환율" in formatted_body:
-            formatted_body = re.sub(r'([^\n]*환율[^\n]*\n)', rf'\1{fx_html}\n', formatted_body, count=1)
-        else:
-            formatted_body = formatted_body.replace("[경제 이슈]", f"[경제 이슈]\n{fx_html}")
+        if "우상향 추세입니다" in formatted_body:
+            formatted_body = re.sub(r'([^\n]*우상향 추세입니다[^\n]*\n)', rf'\1\n{fx_html}\n', formatted_body, count=1)
+        elif "환율" in formatted_body:
+            formatted_body = re.sub(r'([^\n]*환율[^\n]*\n)', rf'{fx_html}\n\1', formatted_body, count=1)
 
+    # Finviz 맵: 테마/기술주 해설 단락 바로 위
     if finviz_html and finviz_html not in formatted_body:
-        if "테마" in formatted_body:
-            formatted_body = re.sub(r'([^\n]*테마[^\n]*\n)', rf'\1{finviz_html}\n', formatted_body, count=1)
-        else:
-            formatted_body = formatted_body.replace("[경제 이슈]", f"[경제 이슈]\n{finviz_html}")
+        if "전반적인 테마" in formatted_body:
+            formatted_body = re.sub(r'([^\n]*전반적인 테마[^\n]*\n)', rf'{finviz_html}\n\1', formatted_body, count=1)
+        elif "기술주" in formatted_body:
+            formatted_body = re.sub(r'([^\n]*기술주[^\n]*\n)', rf'{finviz_html}\n\1', formatted_body, count=1)
 
 # 9. [특징주 분석] 종목별 차트 및 트레이딩뷰 URL 위치 기반 강제 주입
 for stock_name, info in generated_charts_map.items():
@@ -170,13 +175,13 @@ for stock_name, info in generated_charts_map.items():
         stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{filename_only}?t={current_timestamp}" alt="{stock_name} 차트"></div>'
         tv_url_text = info["tv_url"]
 
-        # 1) 플레이스홀더가 존재하면 치환
+        # 1) 플레이스홀더 치환
         if re.search(r'\(종목\s*차트\)', formatted_body, re.IGNORECASE):
             formatted_body = re.sub(r'\(종목\s*차트\)', stock_html, formatted_body, count=1, flags=re.IGNORECASE)
         if re.search(r'\(종목\s*트레이딩뷰\s*url\)', formatted_body, re.IGNORECASE):
             formatted_body = re.sub(r'\(종목\s*트레이딩뷰\s*url\)', tv_url_text, formatted_body, count=1, flags=re.IGNORECASE)
 
-        # 2) 플레이스홀더가 없었을 경우 : 종목 소제목 바로 밑에 차트와 URL 강제 삽입
+        # 2) 플레이스홀더 생략 시: 종목 소제목 아래 강제 삽입
         if stock_html not in formatted_body:
             pattern = rf"([^\n]*{re.escape(stock_name)}[^\n]*\n)"
             formatted_body = re.sub(pattern, rf"\1{stock_html}\n{tv_url_text}\n", formatted_body, count=1)
@@ -214,3 +219,5 @@ with open("blog_preview.html", "w", encoding="utf-8") as f:
     f.write(html_content)
 
 print("blog_preview.html 생성 완료!")
+
+```
