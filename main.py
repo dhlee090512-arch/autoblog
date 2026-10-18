@@ -42,11 +42,11 @@ def load_prompt(filename="prompt.txt"):
     with open(filename, "r", encoding="utf-8") as f:
         return f.read()
 
-# 3. 대시보드 크롤링 및 종목 동적 추출 (거시경제 용어 오인식 차단)
+# 3. 대시보드 크롤링 및 종목 동적 추출 (거시경제 용어 및 티커 오인식 완벽 차단)
 def fetch_dashboard_and_extract_stocks(kr_url, us_url):
     headers = {"User-Agent": "Mozilla/5.0"}
     
-    # 거시지표 약어 및 주식이 아닌 단어들을 블랙리스트로 차단
+    # 거시지표 약어 및 주식이 아닌 단어들을 블랙리스트로 강력 차단
     EXCLUDE_KEYWORDS = {
         "코스피", "코스닥", "USD", "KRW", "NYSE", "NASDAQ", "INDEX",
         "S&P500", "나스닥", "다우존스", "환율", "변동성", "상승률", "하락률",
@@ -73,11 +73,11 @@ def fetch_dashboard_and_extract_stocks(kr_url, us_url):
         if clean_name not in EXCLUDE_KEYWORDS and len(clean_name) > 1:
             extracted_stocks[clean_name] = (f"KRX:{code}", f"chart_{code}.png", f"KRX-{code}")
 
-    # 미장 종목 (2~5자리 티커)
+    # 미장 종목 (2~5자리 티커) - 이름과 티커 자체 모두 블랙리스트 검사
     us_matches = re.findall(r'([가-힣A-Za-z0-9&]+)\s*[\(\[\{]([A-Z]{2,5})[\)\]\}]', us_raw_text)
     for name, ticker in us_matches:
         clean_name = name.strip()
-        if clean_name not in EXCLUDE_KEYWORDS and len(clean_name) > 1:
+        if clean_name not in EXCLUDE_KEYWORDS and ticker not in EXCLUDE_KEYWORDS and len(clean_name) > 1:
             extracted_stocks[clean_name] = (f"NASDAQ:{ticker}", f"chart_{ticker}.png", f"NASDAQ-{ticker}")
 
     print(f"[동적 종목 추출 완료] 총 {len(extracted_stocks)}개: {list(extracted_stocks.keys())}")
@@ -152,14 +152,12 @@ if "[경제 이슈]" in formatted_body:
 
     # 2) 플레이스홀더가 없을 경우 : 문맥 위치를 파악하여 직접 꽂아 넣기
     if fx_html and fx_html not in formatted_body:
-        # '원 달러 환율' 또는 '환율' 관련 언급 아래에 배치
         if "환율" in formatted_body:
             formatted_body = re.sub(r'([^\n]*환율[^\n]*\n)', rf'\1{fx_html}\n', formatted_body, count=1)
         else:
             formatted_body = formatted_body.replace("[경제 이슈]", f"[경제 이슈]\n{fx_html}")
 
     if finviz_html and finviz_html not in formatted_body:
-        # '테마' 또는 '미장' 관련 단락 아래에 배치
         if "테마" in formatted_body:
             formatted_body = re.sub(r'([^\n]*테마[^\n]*\n)', rf'\1{finviz_html}\n', formatted_body, count=1)
         else:
@@ -178,7 +176,7 @@ for stock_name, info in generated_charts_map.items():
         if re.search(r'\(종목\s*트레이딩뷰\s*url\)', formatted_body, re.IGNORECASE):
             formatted_body = re.sub(r'\(종목\s*트레이딩뷰\s*url\)', tv_url_text, formatted_body, count=1, flags=re.IGNORECASE)
 
-        # 2) 플레이스홀더가 없었을 경우 : 종목 소제목(예: 1. 셀트리온 또는 셀트리온) 바로 밑에 차트와 URL 강제 삽입
+        # 2) 플레이스홀더가 없었을 경우 : 종목 소제목 바로 밑에 차트와 URL 강제 삽입
         if stock_html not in formatted_body:
             pattern = rf"([^\n]*{re.escape(stock_name)}[^\n]*\n)"
             formatted_body = re.sub(pattern, rf"\1{stock_html}\n{tv_url_text}\n", formatted_body, count=1)
