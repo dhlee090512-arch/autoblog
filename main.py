@@ -12,7 +12,7 @@ from chart_capture import (
     capture_finviz_map
 )
 
-# 1. 차트 전용 폴더(assets) 관리 및 구버전 파일 완전 초기화
+# 1. assets 폴더 초기화 (이전 잔여 이미지 완전 청소)
 CHART_DIR = "assets"
 if not os.path.exists(CHART_DIR):
     os.makedirs(CHART_DIR)
@@ -22,12 +22,12 @@ else:
         if os.path.isfile(file_path):
             try:
                 os.remove(file_path)
-                print(f"[삭제 완료] 이전 파일 제거: {f}")
+                print(f"[삭제 완료] 이전 잔여 파일 제거: {f}")
             except Exception as e:
-                print(f"[파일 삭제 실패] {f}: {e}")
+                print(f"[삭제 실패 무시] {f}: {e}")
 
 GITHUB_PAGES_BASE_URL = "https://dhlee090512-arch.github.io/autoblog/assets"
-current_timestamp = int(time.time()) # 캐시 방지용 타임스탬프
+current_timestamp = int(time.time())
 
 # 2. API 클라이언트 초기화
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -42,12 +42,16 @@ def load_prompt(filename="prompt.txt"):
     with open(filename, "r", encoding="utf-8") as f:
         return f.read()
 
-# 3. 대시보드 크롤링 및 종목 정보 동적 추출
+# 3. 대시보드 크롤링 및 종목 동적 추출 (거시경제 용어 오인식 차단)
 def fetch_dashboard_and_extract_stocks(kr_url, us_url):
     headers = {"User-Agent": "Mozilla/5.0"}
+    
+    # 거시지표 약어 및 주식이 아닌 단어들을 블랙리스트로 차단
     EXCLUDE_KEYWORDS = {
         "코스피", "코스닥", "USD", "KRW", "NYSE", "NASDAQ", "INDEX",
-        "S&P500", "나스닥", "다우존스", "환율", "변동성", "상승률", "하락률"
+        "S&P500", "나스닥", "다우존스", "환율", "변동성", "상승률", "하락률",
+        "CPI", "CLI", "POC", "PPI", "FOMC", "FED", "GDP", "PCE", "ECB", "BOJ",
+        "DXY", "VIX", "WTI", "BRENT", "GOLD", "US10Y", "US02Y"
     }
 
     res_kr = requests.get(kr_url, headers=headers)
@@ -76,7 +80,7 @@ def fetch_dashboard_and_extract_stocks(kr_url, us_url):
         if clean_name not in EXCLUDE_KEYWORDS and len(clean_name) > 1:
             extracted_stocks[clean_name] = (f"NASDAQ:{ticker}", f"chart_{ticker}.png", f"NASDAQ-{ticker}")
 
-    print(f"[동적 종목 추출] 총 {len(extracted_stocks)}개 파싱: {list(extracted_stocks.keys())}")
+    print(f"[동적 종목 추출 완료] 총 {len(extracted_stocks)}개: {list(extracted_stocks.keys())}")
     return kr_raw_text, us_raw_text, extracted_stocks
 
 kr_url = "https://dhlee090512-arch.github.io/report/index.html"
@@ -134,33 +138,52 @@ for line in lines:
 
 formatted_body = blog_text
 
-# 7. [경제 이슈] 파트의 거시경제 이미지 플레이스홀더 정밀 1:1 치환
+# 7. 이미지 HTML 미리 정의
 fx_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/usdkrw_chart.png?t={current_timestamp}" alt="환율 차트"></div>' if fx_path else ""
 finviz_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/finviz_map.png?t={current_timestamp}" alt="Finviz 섹터 맵"></div>' if finviz_path else ""
 
-formatted_body = re.sub(r'\(환율\s*사진\)', fx_html, formatted_body, flags=re.IGNORECASE)
-formatted_body = re.sub(r'\(finviz\s*사진\)', finviz_html, formatted_body, flags=re.IGNORECASE)
+# 8. [경제 이슈] 파트 이미지 강제 주입 (플레이스홀더가 없더라도 위치 탐색)
+if "[경제 이슈]" in formatted_body:
+    # 1) 기존 플레이스홀더가 존재할 경우 치환
+    if re.search(r'\(환율\s*사진\)', formatted_body, re.IGNORECASE):
+        formatted_body = re.sub(r'\(환율\s*사진\)', fx_html, formatted_body, flags=re.IGNORECASE)
+    if re.search(r'\(finviz\s*사진\)', formatted_body, re.IGNORECASE):
+        formatted_body = re.sub(r'\(finviz\s*사진\)', finviz_html, formatted_body, flags=re.IGNORECASE)
 
-# 8. [특징주 분석] 파트의 종목별 플레이스홀더 치환 (본문 구조를 파괴하지 않고 안전하게 순회)
+    # 2) 플레이스홀더가 없을 경우 : 문맥 위치를 파악하여 직접 꽂아 넣기
+    if fx_html and fx_html not in formatted_body:
+        # '원 달러 환율' 또는 '환율' 관련 언급 아래에 배치
+        if "환율" in formatted_body:
+            formatted_body = re.sub(r'([^\n]*환율[^\n]*\n)', rf'\1{fx_html}\n', formatted_body, count=1)
+        else:
+            formatted_body = formatted_body.replace("[경제 이슈]", f"[경제 이슈]\n{fx_html}")
+
+    if finviz_html and finviz_html not in formatted_body:
+        # '테마' 또는 '미장' 관련 단락 아래에 배치
+        if "테마" in formatted_body:
+            formatted_body = re.sub(r'([^\n]*테마[^\n]*\n)', rf'\1{finviz_html}\n', formatted_body, count=1)
+        else:
+            formatted_body = formatted_body.replace("[경제 이슈]", f"[경제 이슈]\n{finviz_html}")
+
+# 9. [특징주 분석] 종목별 차트 및 트레이딩뷰 URL 위치 기반 강제 주입
 for stock_name, info in generated_charts_map.items():
     if stock_name in formatted_body:
         filename_only = os.path.basename(info["path"])
         stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{filename_only}?t={current_timestamp}" alt="{stock_name} 차트"></div>'
         tv_url_text = info["tv_url"]
 
-        # 본문에서 해당 종목명이 포함된 위치를 찾아, 그 주변의 플레이스홀더만 정확히 교체
-        # 텍스트 전체를 쪼개지 않고 정규식 패턴 매칭으로 첫 번째 등장하는 해당 종목 블록 내의 플레이스홀더만 치환합니다.
-        def replace_match(m):
-            block = m.group(0)
-            block = re.sub(r'\(종목\s*차트\)', stock_html, block, count=1, flags=re.IGNORECASE)
-            block = re.sub(r'\(종목\s*트레이딩뷰\s*url\)', tv_url_text, block, count=1, flags=re.IGNORECASE)
-            return block
+        # 1) 플레이스홀더가 존재하면 치환
+        if re.search(r'\(종목\s*차트\)', formatted_body, re.IGNORECASE):
+            formatted_body = re.sub(r'\(종목\s*차트\)', stock_html, formatted_body, count=1, flags=re.IGNORECASE)
+        if re.search(r'\(종목\s*트레이딩뷰\s*url\)', formatted_body, re.IGNORECASE):
+            formatted_body = re.sub(r'\(종목\s*트레이딩뷰\s*url\)', tv_url_text, formatted_body, count=1, flags=re.IGNORECASE)
 
-        # 종목명부터 다음 번호(예: 2. 또는 다음 섹션)가 나오기 전까지의 블록을 타겟팅
-        pattern = rf"({re.escape(stock_name)}[\s\S]*?(?=\n\n\d+\.|\n\n\[|$))"
-        formatted_body = re.sub(pattern, replace_match, formatted_body, count=1)
+        # 2) 플레이스홀더가 없었을 경우 : 종목 소제목(예: 1. 셀트리온 또는 셀트리온) 바로 밑에 차트와 URL 강제 삽입
+        if stock_html not in formatted_body:
+            pattern = rf"([^\n]*{re.escape(stock_name)}[^\n]*\n)"
+            formatted_body = re.sub(pattern, rf"\1{stock_html}\n{tv_url_text}\n", formatted_body, count=1)
 
-# 9. HTML 미리보기 파일 생성
+# 10. HTML 미리보기 파일 생성
 html_content = f"""<!DOCTYPE html>
 <html lang="ko">
 <head>
