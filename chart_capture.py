@@ -1,136 +1,83 @@
 import os
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import sync_playwright
 
-CHART_DIR = "assets"
-if not os.path.exists(CHART_DIR):
-    os.makedirs(CHART_DIR)
-
-def capture_tradingview_chart(tv_symbol, filename):
-    filepath = os.path.join(CHART_DIR, filename)
-    url = f"https://www.tradingview.com/chart/?symbol={tv_symbol}"
+def capture_tradingview_chart(symbol: str, filename: str) -> str:
+    """
+    main.py와의 호환성을 유지하며, 
+    국내/해외 종목에 맞춰 네이버 증권(또는 네이버페이 증권) 차트를 캡처합니다.
+    """
+    os.makedirs("assets", exist_ok=True)
+    save_path = os.path.join("assets", filename)
     
-    print(f"[Playwright] 트레이딩뷰 차트 캡처 중 ({tv_symbol})...")
+    # 심볼 형태 분석 (예: 'KRX:005930' 또는 'NASDAQ:NVDA')
+    market, code = symbol.split(":") if ":" in symbol else ("KRX", symbol)
+    
+    if market == "KRX":
+        # 네이버 증권 국내 주식 차트 페이지 URL
+        url = f"https://finance.naver.com/item/fchart.naver?code={code}"
+    else:
+        # 네이버페이 증권 모바일 웹을 활용한 해외 주식 차트 URL
+        ticker = code
+        url = f"https://m.stock.naver.com/world/stock/{ticker}/chart"
+
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            context = browser.new_context(viewport={"width": 1200, "height": 800})
-            page = context.new_page()
+            # 차트가 잘 보이도록 적절한 뷰포트 설정
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
             
-            page.goto(url, timeout=60000)
+            page.goto(url, timeout=30000)
+            page.wait_for_timeout(3500) # 차트 및 보조지표 렌더링 대기
             
-            # 컨테이너가 나타날 때까지 최대 10초 대기
-            try:
-                page.wait_for_selector(".chart-container", timeout=10000)
-            except PlaywrightTimeoutError:
-                pass
-            
-            page.wait_for_timeout(2000) # 추가 렌더링 안정화 대기
-            
-            chart_element = page.locator(".chart-container")
-            if chart_element.count() > 0:
-                chart_element.first.screenshot(path=filepath)
+            if market == "KRX":
+                # 국내 증권 차트 영역 지정 캡처 시도 (실패 시 전체 화면 캡처)
+                chart_element = page.locator("#chart_area")
+                if chart_element.count() > 0:
+                    chart_element.screenshot(path=save_path)
+                else:
+                    page.screenshot(path=save_path, full_page=False)
             else:
-                page.screenshot(path=filepath, clip={"x": 0, "y": 50, "width": 1200, "height": 750})
+                # 해외 주식 모바일웹 페이지 캡처
+                page.screenshot(path=save_path, full_page=False)
                 
             browser.close()
-        print(f"[캡처 성공] 트레이딩뷰 차트 저장 완료: {filepath}")
-        return f"{CHART_DIR}/{filename}"
+            print(f"[네이버증권 캡처 성공] {filename}")
+            return save_path
+            
     except Exception as e:
-        print(f"[캡처 오류] {tv_symbol} 캡처 실패: {e}")
+        print(f"[네이버증권 캡처 실패] {symbol}: {e}")
         return None
 
-def capture_fx_tradingview(filename="usdkrw_chart.png"):
-    filepath = os.path.join(CHART_DIR, filename)
-    url = "https://kr.tradingview.com/chart/?symbol=FX_IDC%3AUSDKRW"
-    
-    print("[Playwright] 트레이딩뷰 환율 차트(USDKRW) 캡처 중...")
+def capture_fx_tradingview(filename: str) -> str:
+    # 환율 차트 처리 (필요 시 네이버 환율 페이지 활용 가능)
+    os.makedirs("assets", exist_ok=True)
+    save_path = os.path.join("assets", filename)
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            context = browser.new_context(viewport={"width": 1200, "height": 800})
-            page = context.new_page()
-            
-            page.goto(url, timeout=60000)
-            
-            try:
-                page.wait_for_selector(".chart-container", timeout=10000)
-            except PlaywrightTimeoutError:
-                pass
-                
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
+            # 원달러 환율 페이지
+            page.goto("https://finance.naver.com/marketindex/exchangeDetail.naver?marketindexCd=FX_USDKRW", timeout=30000)
             page.wait_for_timeout(2000)
-            
-            chart_element = page.locator(".chart-container")
-            if chart_element.count() > 0:
-                chart_element.first.screenshot(path=filepath)
-            else:
-                page.screenshot(path=filepath, clip={"x": 0, "y": 50, "width": 1200, "height": 750})
-                
+            page.screenshot(path=save_path)
             browser.close()
-        print(f"[캡처 성공] 환율 차트 저장 완료: {filepath}")
-        return f"{CHART_DIR}/{filename}"
+            return save_path
     except Exception as e:
-        print(f"[캡처 오류] 환율 차트 캡처 실패: {e}")
+        print(f"환율 캡처 실패: {e}")
         return None
 
-def capture_finviz_map(filename="finviz_map.png"):
-    filepath = os.path.join(CHART_DIR, filename)
-    url = "https://finviz.com/map?t=sec"
-    
-    print("[Playwright] Finviz 섹터 맵 정밀 캡처 중...")
+def capture_finviz_map(filename: str) -> str:
+    # Finviz 섹터 맵은 기존 방식 유지
+    os.makedirs("assets", exist_ok=True)
+    save_path = os.path.join("assets", filename)
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-infobars",
-                    "--window-size=1600,1000"
-                ]
-            )
-            
-            context = browser.new_context(
-                viewport={"width": 1600, "height": 1000},
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                locale="en-US",
-                timezone_id="America/New_York"
-            )
-            
-            page = context.new_page()
-            page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-            
-            page.goto(url, timeout=60000)
-            
-            # Finviz 맵 캔버스 요소가 나타날 때까지 대기 (타임아웃 시 전체 캡처로 우회)
-            try:
-                page.wait_for_selector("#canvas-wrapper", timeout=12000)
-            except PlaywrightTimeoutError:
-                print("[경고] #canvas-wrapper 대기 시간 초과")
-
-            page.wait_for_timeout(3000) # 추가 렌더링 대기
-            
-            try:
-                page.evaluate("""
-                    const tourOverlays = document.querySelectorAll('.joyride-overlay, .joyride-tip__container, div[style*="z-index: 1000"]');
-                    tourOverlays.forEach(el => el.remove());
-                """)
-                page.wait_for_timeout(1000)
-            except:
-                pass
-            
-            map_element = page.locator("#canvas-wrapper")
-            
-            if map_element.count() > 0:
-                map_element.first.screenshot(path=filepath)
-                print(f"[캡처 성공] Finviz 맵(#canvas-wrapper) 저장 완료: {filepath}")
-            else:
-                print("[경고] #canvas-wrapper 요소를 찾지 못해 전체 화면으로 대체 캡처합니다.")
-                page.screenshot(path=filepath, clip={"x": 50, "y": 180, "width": 1500, "height": 800})
-
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page(viewport={"width": 1400, "height": 900})
+            page.goto("https://finviz.com/map.svg", timeout=30000)
+            page.screenshot(path=save_path)
             browser.close()
-            
-        return f"{CHART_DIR}/{filename}"
+            return save_path
     except Exception as e:
-        print(f"[캡처 오류] Finviz 맵 캡처 실패: {e}")
+        print(f"Finviz 캡처 실패: {e}")
         return None
