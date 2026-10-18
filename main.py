@@ -1,6 +1,7 @@
 import os
 import re
 import time
+from datetime import datetime, timezone, timedelta
 import requests
 from bs4 import BeautifulSoup
 from google import genai
@@ -29,6 +30,10 @@ else:
 GITHUB_PAGES_BASE_URL = "https://dhlee090512-arch.github.io/autoblog/assets"
 current_timestamp = int(time.time())
 
+# 한국 시간(KST, UTC+9) 구하기
+kst = timezone(timedelta(hours=9))
+formatted_kst_time = datetime.now(kst).strftime("%Y년 %m월 %d일 %H:%M:%S (KST)")
+
 # 2. API 클라이언트 초기화
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
@@ -42,11 +47,10 @@ def load_prompt(filename="prompt.txt"):
     with open(filename, "r", encoding="utf-8") as f:
         return f.read()
 
-# 3. 대시보드 크롤링 및 종목 동적 추출 (거시경제 용어 및 티커 오인식 완벽 차단)
+# 3. 대시보드 크롤링 및 종목 동적 추출 (1:1 정확 매칭 보장)
 def fetch_dashboard_and_extract_stocks(kr_url, us_url):
     headers = {"User-Agent": "Mozilla/5.0"}
     
-    # 거시지표 약어 및 주식이 아닌 단어들을 블랙리스트로 강력 차단
     EXCLUDE_KEYWORDS = {
         "코스피", "코스닥", "USD", "KRW", "NYSE", "NASDAQ", "INDEX",
         "S&P500", "나스닥", "다우존스", "환율", "변동성", "상승률", "하락률",
@@ -71,14 +75,24 @@ def fetch_dashboard_and_extract_stocks(kr_url, us_url):
     for name, code in kr_matches:
         clean_name = name.strip()
         if clean_name not in EXCLUDE_KEYWORDS and len(clean_name) > 1:
-            extracted_stocks[clean_name] = (f"KRX:{code}", f"chart_{code}.png", f"KRX-{code}")
+            extracted_stocks[clean_name] = {
+                "tv_symbol": f"KRX:{code}",
+                "filename": f"chart_{code}.png",
+                "tv_url_code": f"KRX-{code}",
+                "aliases": [clean_name]
+            }
 
-    # 미장 종목 (2~5자리 티커) - 이름과 티커 자체 모두 블랙리스트 검사
-    us_matches = re.findall(r'([가-힣A-Za-z0-9&]+)\s*[\(\[\{]([A-Z]{2,5})[\)\]\}]', us_raw_text)
+    # 미장 종목 (공백 포함 종목명 처리 및 1:1 매칭)
+    us_matches = re.findall(r'([가-힣A-Za-z0-9&\s]+)\s*[\(\[\{]([A-Z]{2,5})[\)\]\}]', us_raw_text)
     for name, ticker in us_matches:
         clean_name = name.strip()
         if clean_name not in EXCLUDE_KEYWORDS and ticker not in EXCLUDE_KEYWORDS and len(clean_name) > 1:
-            extracted_stocks[clean_name] = (f"NASDAQ:{ticker}", f"chart_{ticker}.png", f"NASDAQ-{ticker}")
+            extracted_stocks[clean_name] = {
+                "tv_symbol": f"NASDAQ:{ticker}",
+                "filename": f"chart_{ticker}.png",
+                "tv_url_code": f"NASDAQ-{ticker}",
+                "aliases": [clean_name, ticker]
+            }
 
     print(f"[동적 종목 추출 완료] 총 {len(extracted_stocks)}개: {list(extracted_stocks.keys())}")
     return kr_raw_text, us_raw_text, extracted_stocks
@@ -90,14 +104,14 @@ kr_raw, us_raw, dynamic_stocks = fetch_dashboard_and_extract_stocks(kr_url, us_u
 
 # 4. 차트 및 에셋 사전 캡처
 generated_charts_map = {}
-for stock_name, info in dynamic_stocks.items():
-    tv_symbol, fname, tv_url_code = info
-    res_path = capture_tradingview_chart(tv_symbol, fname)
+for stock_key, info in dynamic_stocks.items():
+    res_path = capture_tradingview_chart(info["tv_symbol"], info["filename"])
     if res_path:
-        tv_url = f"https://www.tradingview.com/symbols/{tv_url_code}/"
-        generated_charts_map[stock_name] = {
+        tv_url = f"https://www.tradingview.com/symbols/{info['tv_url_code']}/"
+        generated_charts_map[stock_key] = {
             "path": res_path,
-            "tv_url": tv_url
+            "tv_url": tv_url,
+            "aliases": info["aliases"]
         }
 
 fx_path = capture_fx_tradingview("usdkrw_chart.png")
@@ -142,54 +156,45 @@ formatted_body = blog_text
 fx_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/usdkrw_chart.png?t={current_timestamp}" alt="환율 차트"></div>' if fx_path else ""
 finviz_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/finviz_map.png?t={current_timestamp}" alt="Finviz 섹터 맵"></div>' if finviz_path else ""
 
-# 8. [경제 이슈] 파트 이미지 배치 정교화 (의도한 순서 보장)
+# 8. [경제 이슈] 파트 이미지 위치 주입
 if "[경제 이슈]" in formatted_body:
-    # 1) 플레이스홀더 치환 우선 적용
     formatted_body = re.sub(r'\(환율\s*사진\)', fx_html, formatted_body, flags=re.IGNORECASE)
     formatted_body = re.sub(r'\(finviz\s*사진\)', finviz_html, formatted_body, flags=re.IGNORECASE)
 
-    # 2) 플레이스홀더 생략 시 문맥 위치 강제 주입
-    # 환율 차트: 안내 문구("우상향 추세입니다.") 직후 또는 환율 언급 단락 바로 위
     if fx_html and fx_html not in formatted_body:
         if "우상향 추세입니다" in formatted_body:
             formatted_body = re.sub(r'([^\n]*우상향 추세입니다[^\n]*\n)', rf'\1\n{fx_html}\n', formatted_body, count=1)
         elif "환율" in formatted_body:
             formatted_body = re.sub(r'([^\n]*환율[^\n]*\n)', rf'{fx_html}\n\1', formatted_body, count=1)
 
-    # Finviz 맵: 테마/기술주 해설 단락 바로 위
     if finviz_html and finviz_html not in formatted_body:
         if "전반적인 테마" in formatted_body:
             formatted_body = re.sub(r'([^\n]*전반적인 테마[^\n]*\n)', rf'{finviz_html}\n\1', formatted_body, count=1)
         elif "기술주" in formatted_body:
             formatted_body = re.sub(r'([^\n]*기술주[^\n]*\n)', rf'{finviz_html}\n\1', formatted_body, count=1)
 
-# 9. [특징주 분석] 종목별 차트 및 트레이딩뷰 URL 1:1 정확 매칭 주입
-for stock_name, info in generated_charts_map.items():
-    # 본문에 해당 종목명이 존재하는 경우에만 정확히 해당 위치 아래에 주입
-    if stock_name in formatted_body:
-        filename_only = os.path.basename(info["path"])
-        stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{filename_only}?t={current_timestamp}" alt="{stock_name} 차트"></div>'
-        tv_url_text = info["tv_url"]
+# 9. [특징주 분석] 종목별 차트 및 트레이딩뷰 URL 1:1 정확 매칭
+for stock_key, info in generated_charts_map.items():
+    filename_only = os.path.basename(info["path"])
+    stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{filename_only}?t={current_timestamp}" alt="{stock_key} 차트"></div>'
+    tv_url_text = info["tv_url"]
 
-        # 종목 소제목(예: "1. Nvidia", "Nvidia", "엔비디아" 등) 패턴 찾기
-        pattern = rf"([^\n]*{re.escape(stock_name)}[^\n]*\n)"
+    found_alias = None
+    for alias in info["aliases"]:
+        if alias in formatted_body:
+            found_alias = alias
+            break
+
+    if found_alias:
+        pattern = rf"([^\n]*{re.escape(found_alias)}[^\n]*\n)"
         
-        # 해당 종목명 바로 아랫줄에 위치한 플레이스홀더를 고유 차트/URL로 치환하거나, 플레이스홀더가 없으면 바로 삽입
-        if stock_html not in formatted_body:
-            # 해당 종목 단락 내에 있는 플레이스홀더를 해당 종목 차트로 특정 치환
-            def replace_stock_assets(match):
-                block = match.group(0)
-                # 플레이스홀더 치환
-                block = re.sub(r'\(종목\s*차트\)', stock_html, block, count=1, flags=re.IGNORECASE)
-                block = re.sub(r'\(종목\s*트레이딩뷰\s*url\)', tv_url_text, block, count=1, flags=re.IGNORECASE)
-                # 만약 플레이스홀더가 없었다면 종목명 바로 다음 줄에 차트 + URL 삽입
-                if stock_html not in block:
-                    lines = block.split('\n', 1)
-                    block = lines[0] + '\n' + stock_html + '\n' + tv_url_text + '\n' + (lines[1] if len(lines) > 1 else '')
-                return block
+        if "(종목 차트)" in formatted_body:
+            formatted_body = formatted_body.replace("(종목 차트)", stock_html, 1)
+        if "(종목 트레이딩뷰 url)" in formatted_body:
+            formatted_body = formatted_body.replace("(종목 트레이딩뷰 url)", tv_url_text, 1)
 
-            # 종목명이 포함된 단락/줄 기준으로 스코프를 줄여 치환 진행
-            formatted_body = re.sub(rf"({re.escape(stock_name)}[^\n]*\n(?:[^\n]*\n){{0,4}})", replace_stock_assets, formatted_body, count=1)
+        if stock_html not in formatted_body:
+            formatted_body = re.sub(pattern, rf"\1{stock_html}\n{tv_url_text}\n", formatted_body, count=1)
 
 # 10. HTML 미리보기 파일 생성
 html_content = f"""<!DOCTYPE html>
@@ -199,7 +204,8 @@ html_content = f"""<!DOCTYPE html>
     <title>{post_title}</title>
     <style>
         body {{ font-family: 'Apple SD Gothic Neo', sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; line-height: 1.7; color: #333; }}
-        h1 {{ border-bottom: 2px solid #333; padding-bottom: 10px; font-size: 24px; }}
+        .timestamp-badge {{ background: #f1f3f5; color: #495057; font-size: 13px; padding: 6px 12px; border-radius: 20px; display: inline-block; margin-bottom: 15px; font-weight: bold; border: 1px solid #dee2e6; }}
+        h1 {{ border-bottom: 2px solid #333; padding-bottom: 10px; font-size: 24px; margin-top: 10px; }}
         .title-box {{ background: #eef5ff; border-left: 5px solid #2b7de9; padding: 15px; margin-bottom: 25px; border-radius: 4px; font-size: 18px; font-weight: bold; color: #1a498b; }}
         .content {{ white-space: pre-wrap; background: #fafafa; padding: 25px; border-radius: 8px; font-size: 16px; word-break: break-all; border: 1px solid #eee; }}
         .img-box {{ margin: 25px 0; text-align: center; }}
@@ -207,6 +213,7 @@ html_content = f"""<!DOCTYPE html>
     </style>
 </head>
 <body>
+    <div class="timestamp-badge">⏱️ 업데이트 시각: {formatted_kst_time}</div>
     <h1>📊 자동 생성 블로그 포스팅 미리보기</h1>
     <p>아래 제목과 본문을 드래그해서 그대로 블로그에 붙여넣으세요.</p>
     <hr>
