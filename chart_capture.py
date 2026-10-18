@@ -1,5 +1,5 @@
 import os
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 CHART_DIR = "assets"
 if not os.path.exists(CHART_DIR):
@@ -17,7 +17,14 @@ def capture_tradingview_chart(tv_symbol, filename):
             page = context.new_page()
             
             page.goto(url, timeout=60000)
-            page.wait_for_timeout(4000)
+            
+            # 컨테이너가 나타날 때까지 최대 10초 대기
+            try:
+                page.wait_for_selector(".chart-container", timeout=10000)
+            except PlaywrightTimeoutError:
+                pass
+            
+            page.wait_for_timeout(2000) # 추가 렌더링 안정화 대기
             
             chart_element = page.locator(".chart-container")
             if chart_element.count() > 0:
@@ -44,7 +51,13 @@ def capture_fx_tradingview(filename="usdkrw_chart.png"):
             page = context.new_page()
             
             page.goto(url, timeout=60000)
-            page.wait_for_timeout(5000)
+            
+            try:
+                page.wait_for_selector(".chart-container", timeout=10000)
+            except PlaywrightTimeoutError:
+                pass
+                
+            page.wait_for_timeout(2000)
             
             chart_element = page.locator(".chart-container")
             if chart_element.count() > 0:
@@ -88,7 +101,14 @@ def capture_finviz_map(filename="finviz_map.png"):
             page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
             
             page.goto(url, timeout=60000)
-            page.wait_for_timeout(7000)
+            
+            # Finviz 맵 캔버스 요소가 나타날 때까지 대기 (타임아웃 시 전체 캡처로 우회)
+            try:
+                page.wait_for_selector("#canvas-wrapper", timeout=12000)
+            except PlaywrightTimeoutError:
+                print("[경고] #canvas-wrapper 대기 시간 초과")
+
+            page.wait_for_timeout(3000) # 추가 렌더링 대기
             
             try:
                 page.evaluate("""
