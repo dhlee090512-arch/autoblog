@@ -173,35 +173,39 @@ if "[경제 이슈]" in formatted_body:
         elif "기술주" in formatted_body:
             formatted_body = re.sub(r'([^\n]*기술주[^\n]*\n)', rf'{finviz_html}\n\1', formatted_body, count=1)
 
-# 9. [특징주 분석] 대소문자 무시 정밀 1:1 매칭 및 플레이스홀더 치환
-formatted_body_lower = formatted_body.lower()
-
+# 9. [특징주 분석] 유연한 부분 일치 매칭 및 플레이스홀더 잔여분 일괄 처리
 for stock_key, info in generated_charts_map.items():
     filename_only = os.path.basename(info["path"])
     stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{filename_only}?t={current_timestamp}" alt="{stock_key} 차트"></div>'
     tv_url_text = info["tv_url"]
 
-    # aliases(한글, 영문, 대문자 티커 모두 포함) 중 본문에 존재하는 매칭어 검색
-    found_in_body = False
+    # 각 alias(테슬라, tesla, tsla 등)가 본문에 포함되어 있는지 검사
+    matched = False
     for alias in info["aliases"]:
-        if alias in formatted_body_lower:
-            found_in_body = True
+        if alias in formatted_body.lower():
+            matched = True
             break
 
-    if found_in_body:
-        # 1) 플레이스홀더가 본문에 존재하는 경우 차례대로 1:1 치환
+    if matched:
+        # 본문에 (종목 차트)나 (종목 트레이딩뷰 url) 플레이스홀더가 남아있다면 순서대로 무조건 1개씩 치환
         if re.search(r'\(종목\s*차트\)', formatted_body, re.IGNORECASE):
             formatted_body = re.sub(r'\(종목\s*차트\)', stock_html, formatted_body, count=1, flags=re.IGNORECASE)
         if re.search(r'\(종목\s*트레이딩뷰\s*url\)', formatted_body, re.IGNORECASE):
             formatted_body = re.sub(r'\(종목\s*트레이딩뷰\s*url\)', tv_url_text, formatted_body, count=1, flags=re.IGNORECASE)
 
-        # 2) 플레이스홀더가 누락되었을 경우 종목 제목 밑에 직접 강제 삽입
-        if stock_html not in formatted_body:
-            for alias in info["aliases"]:
-                pattern = rf"([^\n]*{re.escape(alias)}[^\n]*\n)"
-                if re.search(pattern, formatted_body, re.IGNORECASE):
-                    formatted_body = re.sub(pattern, rf"\1{stock_html}\n{tv_url_text}\n", formatted_body, count=1, flags=re.IGNORECASE)
-                    break
+# 만약 위 루프를 돌았음에도 플레이스홀더가 글에 잔존하는 경우를 대비한 안전 장치
+# (혹시라도 매칭되지 못한 남은 플레이스홀더가 있다면 에러 방지를 위해 빈 칸으로 정리하거나 순차 매핑)
+while "(종목 차트)" in formatted_body:
+    # 남은 첫 번째 플레이스홀더를 남은 차트 중 하나로 강제 치환
+    for sk, inf in generated_charts_map.items():
+        fn = os.path.basename(inf["path"])
+        s_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{fn}?t={current_timestamp}" alt="{sk} 차트"></div>'
+        if s_html not in formatted_body:
+            formatted_body = formatted_body.replace("(종목 차트)", s_html, 1)
+            formatted_body = formatted_body.replace("(종목 트레이딩뷰 url)", inf["tv_url"], 1)
+            break
+    else:
+        break
 
 # 10. HTML 미리보기 파일 생성
 html_content = f"""<!DOCTYPE html>
