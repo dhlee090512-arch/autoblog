@@ -47,7 +47,7 @@ def load_prompt(filename="prompt.txt"):
     with open(filename, "r", encoding="utf-8") as f:
         return f.read()
 
-# 3. 대시보드 크롤링 및 종목 동적 추출 (대소문자 무시 및 티커/영문/한글 통합 얼라이어스 생성)
+# 3. 대시보드 크롤링 및 종목 동적 추출
 def fetch_dashboard_and_extract_stocks(kr_url, us_url):
     headers = {"User-Agent": "Mozilla/5.0"}
     
@@ -82,17 +82,23 @@ def fetch_dashboard_and_extract_stocks(kr_url, us_url):
                 "aliases": [clean_name.lower(), code.lower()]
             }
 
-    # 미장 종목 (티커/한글명 대소문자 구별 없이 처리)
-    us_matches = re.findall(r'([가-힣A-Za-z0-9&\s]+)\s*[\(\[\{]([A-Z]{2,5})[\)\]\}]', us_raw_text)
+    # 미장 종목 (법인 표기 및 기호 정제)
+    us_matches = re.findall(r'([가-힣A-Za-z0-9&\s,.]+)\s*[\(\[\{]([A-Z]{2,5})[\)\]\}]', us_raw_text)
     for name, ticker in us_matches:
         clean_name = name.strip()
-        if clean_name not in EXCLUDE_KEYWORDS and ticker not in EXCLUDE_KEYWORDS and len(clean_name) > 1:
-            extracted_stocks[clean_name] = {
-                "tv_symbol": f"NASDAQ:{ticker}",
-                "filename": f"chart_{ticker}.png",
-                "tv_url_code": f"NASDAQ-{ticker}",
-                "aliases": [clean_name.lower(), ticker.lower(), clean_name.replace(" ", "").lower()]
-            }
+        base_name = re.sub(r',?\s*(Inc\.?|Corp\.?|Co\.?|Ltd\.?)$', '', clean_name, flags=re.IGNORECASE).strip()
+        extracted_stocks[clean_name] = {
+            "tv_symbol": f"NASDAQ:{ticker}",
+            "filename": f"chart_{ticker}.png",
+            "tv_url_code": f"NASDAQ-{ticker}",
+            "aliases": [
+                clean_name.lower(),
+                base_name.lower(),
+                ticker.lower(),
+                clean_name.replace(" ", "").lower(),
+                base_name.replace(" ", "").lower()
+            ]
+        }
 
     print(f"[동적 종목 추출 완료] 총 {len(extracted_stocks)}개: {list(extracted_stocks.keys())}")
     return kr_raw_text, us_raw_text, extracted_stocks
@@ -173,39 +179,61 @@ if "[경제 이슈]" in formatted_body:
         elif "기술주" in formatted_body:
             formatted_body = re.sub(r'([^\n]*기술주[^\n]*\n)', rf'{finviz_html}\n\1', formatted_body, count=1)
 
-# 9. [특징주 분석] 유연한 부분 일치 매칭 및 플레이스홀더 잔여분 일괄 처리
-for stock_key, info in generated_charts_map.items():
-    filename_only = os.path.basename(info["path"])
-    stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{filename_only}?t={current_timestamp}" alt="{stock_key} 차트"></div>'
-    tv_url_text = info["tv_url"]
-
-    # 각 alias(테슬라, tesla, tsla 등)가 본문에 포함되어 있는지 검사
-    matched = False
-    for alias in info["aliases"]:
-        if alias in formatted_body.lower():
-            matched = True
-            break
-
-    if matched:
-        # 본문에 (종목 차트)나 (종목 트레이딩뷰 url) 플레이스홀더가 남아있다면 순서대로 무조건 1개씩 치환
-        if re.search(r'\(종목\s*차트\)', formatted_body, re.IGNORECASE):
-            formatted_body = re.sub(r'\(종목\s*차트\)', stock_html, formatted_body, count=1, flags=re.IGNORECASE)
-        if re.search(r'\(종목\s*트레이딩뷰\s*url\)', formatted_body, re.IGNORECASE):
-            formatted_body = re.sub(r'\(종목\s*트레이딩뷰\s*url\)', tv_url_text, formatted_body, count=1, flags=re.IGNORECASE)
-
-# 만약 위 루프를 돌았음에도 플레이스홀더가 글에 잔존하는 경우를 대비한 안전 장치
-# (혹시라도 매칭되지 못한 남은 플레이스홀더가 있다면 에러 방지를 위해 빈 칸으로 정리하거나 순차 매핑)
-while "(종목 차트)" in formatted_body:
-    # 남은 첫 번째 플레이스홀더를 남은 차트 중 하나로 강제 치환
-    for sk, inf in generated_charts_map.items():
-        fn = os.path.basename(inf["path"])
-        s_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{fn}?t={current_timestamp}" alt="{sk} 차트"></div>'
-        if s_html not in formatted_body:
-            formatted_body = formatted_body.replace("(종목 차트)", s_html, 1)
-            formatted_body = formatted_body.replace("(종목 트레이딩뷰 url)", inf["tv_url"], 1)
-            break
-    else:
-        break
+# 9. [특징주 분석] 소제목 블록 단위 격리 치환 (교차 오매칭 완벽 방지)
+if "[특징주 분석]" in formatted_body:
+    main_parts = formatted_body.split("[특징주 분석]")
+    intro_text = main_parts[0]
+    feature_text = "[특징주 분석]" + main_parts[1]
+    
+    feature_lines = feature_text.split("\n")
+    heading_indices = []
+    for idx, line in enumerate(feature_lines):
+        if re.match(r'^\d+\.\s+', line.strip()):
+            heading_indices.append(idx)
+            
+    new_feature_blocks = []
+    if heading_indices:
+        new_feature_blocks.append("\n".join(feature_lines[:heading_indices[0]]))
+        
+        for i in range(len(heading_indices)):
+            start_idx = heading_indices[i]
+            end_idx = heading_indices[i+1] if i + 1 < len(heading_indices) else len(feature_lines)
+            
+            block_lines = feature_lines[start_idx:end_idx]
+            block_text = "\n".join(block_lines)
+            
+            # 소제목 라인에서 종목명 추출 (예: "4. Tesla, Inc." -> "Tesla, Inc.")
+            heading_line = block_lines[0].strip()
+            stock_name_raw = re.sub(r'^\d+\.\s+', '', heading_line).strip()
+            search_term = stock_name_raw.lower()
+            clean_search = re.sub(r',?\s*(Inc\.?|Corp\.?|Co\.?|Ltd\.?)$', '', search_term).strip()
+            
+            matched_info = None
+            for stock_key, info in generated_charts_map.items():
+                sk_lower = stock_key.lower()
+                if sk_lower in clean_search or clean_search in sk_lower or clean_search in sk_lower.replace(" ", ""):
+                    matched_info = info
+                    break
+                for alias in info["aliases"]:
+                    if alias in clean_search or clean_search in alias:
+                        matched_info = info
+                        break
+                if matched_info:
+                    break
+            
+            # 해당 종목 블록 내부에만 차트와 URL 치환 적용
+            if matched_info:
+                filename_only = os.path.basename(matched_info["path"])
+                stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{filename_only}?t={current_timestamp}" alt="{stock_name_raw} 차트"></div>'
+                tv_url_text = matched_info["tv_url"]
+                
+                block_text = block_text.replace("(종목 차트)", stock_html)
+                block_text = block_text.replace("(종목 트레이딩뷰 url)", tv_url_text)
+            
+            new_feature_blocks.append(block_text)
+            
+        feature_text = "\n".join(new_feature_blocks)
+        formatted_body = intro_text + feature_text
 
 # 10. HTML 미리보기 파일 생성
 html_content = f"""<!DOCTYPE html>
