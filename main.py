@@ -47,7 +47,7 @@ def load_prompt(filename="prompt.txt"):
     with open(filename, "r", encoding="utf-8") as f:
         return f.read()
 
-# 3. 대시보드 크롤링 및 종목 동적 추출 (1:1 정확 매칭 보장)
+# 3. 대시보드 크롤링 및 종목 동적 추출 (대소문자 무시 및 티커/영문/한글 통합 얼라이어스 생성)
 def fetch_dashboard_and_extract_stocks(kr_url, us_url):
     headers = {"User-Agent": "Mozilla/5.0"}
     
@@ -79,10 +79,10 @@ def fetch_dashboard_and_extract_stocks(kr_url, us_url):
                 "tv_symbol": f"KRX:{code}",
                 "filename": f"chart_{code}.png",
                 "tv_url_code": f"KRX-{code}",
-                "aliases": [clean_name]
+                "aliases": [clean_name.lower(), code.lower()]
             }
 
-    # 미장 종목 (공백 포함 종목명 처리 및 1:1 매칭)
+    # 미장 종목 (티커/한글명 대소문자 구별 없이 처리)
     us_matches = re.findall(r'([가-힣A-Za-z0-9&\s]+)\s*[\(\[\{]([A-Z]{2,5})[\)\]\}]', us_raw_text)
     for name, ticker in us_matches:
         clean_name = name.strip()
@@ -91,7 +91,7 @@ def fetch_dashboard_and_extract_stocks(kr_url, us_url):
                 "tv_symbol": f"NASDAQ:{ticker}",
                 "filename": f"chart_{ticker}.png",
                 "tv_url_code": f"NASDAQ-{ticker}",
-                "aliases": [clean_name, ticker]
+                "aliases": [clean_name.lower(), ticker.lower(), clean_name.replace(" ", "").lower()]
             }
 
     print(f"[동적 종목 추출 완료] 총 {len(extracted_stocks)}개: {list(extracted_stocks.keys())}")
@@ -173,28 +173,35 @@ if "[경제 이슈]" in formatted_body:
         elif "기술주" in formatted_body:
             formatted_body = re.sub(r'([^\n]*기술주[^\n]*\n)', rf'{finviz_html}\n\1', formatted_body, count=1)
 
-# 9. [특징주 분석] 종목별 차트 및 트레이딩뷰 URL 1:1 정확 매칭
+# 9. [특징주 분석] 대소문자 무시 정밀 1:1 매칭 및 플레이스홀더 치환
+formatted_body_lower = formatted_body.lower()
+
 for stock_key, info in generated_charts_map.items():
     filename_only = os.path.basename(info["path"])
     stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{filename_only}?t={current_timestamp}" alt="{stock_key} 차트"></div>'
     tv_url_text = info["tv_url"]
 
-    found_alias = None
+    # aliases(한글, 영문, 대문자 티커 모두 포함) 중 본문에 존재하는 매칭어 검색
+    found_in_body = False
     for alias in info["aliases"]:
-        if alias in formatted_body:
-            found_alias = alias
+        if alias in formatted_body_lower:
+            found_in_body = True
             break
 
-    if found_alias:
-        pattern = rf"([^\n]*{re.escape(found_alias)}[^\n]*\n)"
-        
-        if "(종목 차트)" in formatted_body:
-            formatted_body = formatted_body.replace("(종목 차트)", stock_html, 1)
-        if "(종목 트레이딩뷰 url)" in formatted_body:
-            formatted_body = formatted_body.replace("(종목 트레이딩뷰 url)", tv_url_text, 1)
+    if found_in_body:
+        # 1) 플레이스홀더가 본문에 존재하는 경우 차례대로 1:1 치환
+        if re.search(r'\(종목\s*차트\)', formatted_body, re.IGNORECASE):
+            formatted_body = re.sub(r'\(종목\s*차트\)', stock_html, formatted_body, count=1, flags=re.IGNORECASE)
+        if re.search(r'\(종목\s*트레이딩뷰\s*url\)', formatted_body, re.IGNORECASE):
+            formatted_body = re.sub(r'\(종목\s*트레이딩뷰\s*url\)', tv_url_text, formatted_body, count=1, flags=re.IGNORECASE)
 
+        # 2) 플레이스홀더가 누락되었을 경우 종목 제목 밑에 직접 강제 삽입
         if stock_html not in formatted_body:
-            formatted_body = re.sub(pattern, rf"\1{stock_html}\n{tv_url_text}\n", formatted_body, count=1)
+            for alias in info["aliases"]:
+                pattern = rf"([^\n]*{re.escape(alias)}[^\n]*\n)"
+                if re.search(pattern, formatted_body, re.IGNORECASE):
+                    formatted_body = re.sub(pattern, rf"\1{stock_html}\n{tv_url_text}\n", formatted_body, count=1, flags=re.IGNORECASE)
+                    break
 
 # 10. HTML 미리보기 파일 생성
 html_content = f"""<!DOCTYPE html>
