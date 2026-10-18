@@ -134,35 +134,31 @@ for line in lines:
 
 formatted_body = blog_text
 
-# 7. 플레이스홀더 정밀 치환 (환율 및 Finviz)
+# 7. [경제 이슈] 파트의 거시경제 이미지 플레이스홀더 정밀 1:1 치환
 fx_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/usdkrw_chart.png?t={current_timestamp}" alt="환율 차트"></div>' if fx_path else ""
 finviz_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/finviz_map.png?t={current_timestamp}" alt="Finviz 섹터 맵"></div>' if finviz_path else ""
 
-# 대소문자나 띄어쓰기 오차를 방지하기 위해 유연하게 매칭
 formatted_body = re.sub(r'\(환율\s*사진\)', fx_html, formatted_body, flags=re.IGNORECASE)
 formatted_body = re.sub(r'\(finviz\s*사진\)', finviz_html, formatted_body, flags=re.IGNORECASE)
 
-# 8. 각 종목별 플레이스홀더 치환 (순서 밀림 방지를 위한 안전 분할 방식)
+# 8. [특징주 분석] 파트의 종목별 플레이스홀더 치환 (본문 구조를 파괴하지 않고 안전하게 순회)
 for stock_name, info in generated_charts_map.items():
     if stock_name in formatted_body:
         filename_only = os.path.basename(info["path"])
         stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{filename_only}?t={current_timestamp}" alt="{stock_name} 차트"></div>'
         tv_url_text = info["tv_url"]
 
-        # 해당 종목 키워드가 포함된 블록을 찾아 내부의 플레이스홀더만 정확히 치환
-        # (마지막 종목까지 누락 없이 모두 처리되도록 분할 범위 확장)
-        parts = formatted_body.split(stock_name)
-        if len(parts) > 1:
-            # 첫 번째 등장하는 해당 종목 섹션 파트에만 차트와 URL 삽입
-            target_section = parts[1]
-            target_section = re.sub(r'\(종목\s*차트\)', stock_html, target_section, count=1, flags=re.IGNORECASE)
-            target_section = re.sub(r'\(종목\s*트레이딩뷰\s*url\)', tv_url_text, target_section, count=1, flags=re.IGNORECASE)
-            
-            # 만약 플레이스홀더가 아예 적혀있지 않았다면 종목명 바로 아래에 강제 삽입
-            if "(종목 차트)" not in target_section and stock_html not in target_section:
-                target_section = f"\n{stock_html}\n{tv_url_text}\n" + target_section
-                
-            formatted_body = stock_name + target_section + "".join(parts[2:])
+        # 본문에서 해당 종목명이 포함된 위치를 찾아, 그 주변의 플레이스홀더만 정확히 교체
+        # 텍스트 전체를 쪼개지 않고 정규식 패턴 매칭으로 첫 번째 등장하는 해당 종목 블록 내의 플레이스홀더만 치환합니다.
+        def replace_match(m):
+            block = m.group(0)
+            block = re.sub(r'\(종목\s*차트\)', stock_html, block, count=1, flags=re.IGNORECASE)
+            block = re.sub(r'\(종목\s*트레이딩뷰\s*url\)', tv_url_text, block, count=1, flags=re.IGNORECASE)
+            return block
+
+        # 종목명부터 다음 번호(예: 2. 또는 다음 섹션)가 나오기 전까지의 블록을 타겟팅
+        pattern = rf"({re.escape(stock_name)}[\s\S]*?(?=\n\n\d+\.|\n\n\[|$))"
+        formatted_body = re.sub(pattern, replace_match, formatted_body, count=1)
 
 # 9. HTML 미리보기 파일 생성
 html_content = f"""<!DOCTYPE html>
@@ -185,7 +181,7 @@ html_content = f"""<!DOCTYPE html>
     <hr>
     
     <h3>📌 포스팅 제목</h3>
-    <div class="title-box">{post_title}</h3>
+    <div class="title-box">{post_title}</div>
 
     <h3>📝 본문 텍스트 (차트 및 거시경제 링크 포함)</h3>
     <div class="content">{formatted_body}</div>
