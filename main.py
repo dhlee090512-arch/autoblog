@@ -1,6 +1,7 @@
 import os
 import re
 import time
+import json
 from datetime import datetime, timezone, timedelta
 import requests
 from bs4 import BeautifulSoup
@@ -233,8 +234,9 @@ if "[특징주 분석]" in formatted_body:
         feature_text = "\n".join(new_feature_blocks)
         formatted_body = intro_text + feature_text
 
-# 10. HTML 미리보기 파일 생성 (줄바꿈 <br> 변환 적용)
+# 10. HTML 미리보기 파일 생성 (클립보드 복사 버튼 및 줄바꿈 <br> 변환 적용)
 html_body_formatted = formatted_body.replace("\n", "<br>")
+json_safe_clipboard_text = json.dumps(formatted_body)
 
 html_content = f"""<!DOCTYPE html>
 <html lang="ko">
@@ -246,7 +248,10 @@ html_content = f"""<!DOCTYPE html>
         .timestamp-badge {{ background: #f1f3f5; color: #495057; font-size: 13px; padding: 6px 12px; border-radius: 20px; display: inline-block; margin-bottom: 15px; font-weight: bold; border: 1px solid #dee2e6; }}
         h1 {{ border-bottom: 2px solid #333; padding-bottom: 10px; font-size: 24px; margin-top: 10px; }}
         .title-box {{ background: #eef5ff; border-left: 5px solid #2b7de9; padding: 15px; margin-bottom: 25px; border-radius: 4px; font-size: 18px; font-weight: bold; color: #1a498b; }}
-        .content {{ background: #fafafa; padding: 25px; border-radius: 8px; font-size: 16px; word-break: break-all; border: 1px solid #eee; }}
+        .content-container {{ position: relative; }}
+        .copy-btn {{ position: absolute; top: 15px; right: 15px; background: #2b7de9; color: white; border: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 14px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); transition: background 0.2s; }}
+        .copy-btn:hover {{ background: #1a5bb8; }}
+        .content {{ background: #fafafa; padding: 25px; padding-top: 55px; border-radius: 8px; font-size: 16px; word-break: break-all; border: 1px solid #eee; }}
         .img-box {{ margin: 25px 0; text-align: center; }}
         img {{ max-width: 100%; height: auto; border: 1px solid #e1e4e8; border-radius: 6px; display: block; margin: 0 auto; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }}
     </style>
@@ -254,14 +259,34 @@ html_content = f"""<!DOCTYPE html>
 <body>
     <div class="timestamp-badge">⏱️ 업데이트 시각: {formatted_kst_time}</div>
     <h1>📊 자동 생성 블로그 포스팅 미리보기</h1>
-    <p>아래 제목과 본문을 드래그해서 그대로 블로그에 붙여넣으세요.</p>
+    <p>우측 상단의 <b>[본문 복사]</b> 버튼을 누른 뒤 블로그 에디터에 붙여넣으세요!</p>
     <hr>
     
     <h3>📌 포스팅 제목</h3>
     <div class="title-box">{post_title}</div>
 
     <h3>📝 본문 텍스트 (차트 및 거시경제 링크 포함)</h3>
-    <div class="content">{html_body_formatted}</div>
+    <div class="content-container">
+        <button class="copy-btn" onclick="copyContent()">📋 본문 복사</button>
+        <div class="content" id="blog-content">{html_body_formatted}</div>
+    </div>
+
+    <script>
+        function copyContent() {{
+            const textToCopy = {json_safe_clipboard_text};
+            navigator.clipboard.writeText(textToCopy).then(() => {{
+                const btn = document.querySelector('.copy-btn');
+                btn.innerText = '✅ 복사 완료!';
+                btn.style.background = '#2b8a3e';
+                setTimeout(() => {{
+                    btn.innerText = '📋 본문 복사';
+                    btn.style.background = '#2b7de9';
+                }}, 2000);
+            }}).catch(err => {{
+                alert('복사 실패: ' + err);
+            }});
+        }}
+    </script>
 </body>
 </html>
 """
