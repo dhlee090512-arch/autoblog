@@ -1,8 +1,10 @@
 name: Daily Auto Blog Generator
 
 on:
-  schedule:
-    - cron: '30 7 * * *' # 한국시간 오후 4시 30분
+  repository_dispatch:     # 외부 API(cron-job.org 등) 호출로 실행
+    types: [run-autoblog]
+  #schedule:
+  #  - cron: '30 7 * * *' # 한국시간 오후 4시 30분
   workflow_dispatch:
 
 jobs:
