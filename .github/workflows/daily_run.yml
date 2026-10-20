@@ -10,13 +10,17 @@ on:
 jobs:
   run-script:
     runs-on: ubuntu-latest
+    
+    # [필수] 깃허브 액션이 레포지토리에 파일을 커밋/푸시할 수 있도록 권한 부여
+    permissions:
+      contents: write
 
     steps:
     - name: 저장소 코드 불러오기
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: 파이썬 3.10 설치
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.10'
 
@@ -31,13 +35,13 @@ jobs:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       run: python main.py
 
-    - name: 생성된 파일 깃허브에 자동 업로드(Commit)
+    - name: 생성된 파일 및 히스토리 깃허브에 자동 업로드(Commit & Push)
       run: |
         git config --global user.name "github-actions[bot]"
-        git config --global user.email "github-actions[bot]@users.noreply.github.io"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
         
-        # assets 폴더 내 구버전 삭제 및 신규 차트/HTML 변경 사항 모두 반영
+        # assets, stock_history.json, blog_preview.html 등 변경된 모든 파일 반영
         git add -A
         
-        git commit -m "Auto-update daily blog preview and clean charts [skip ci]" || exit 0
+        git commit -m "Auto-update blog preview, stock history, and charts [skip ci]" || exit 0
         git push
