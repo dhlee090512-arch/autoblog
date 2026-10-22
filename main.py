@@ -5,6 +5,7 @@ import json
 from datetime import datetime, timezone, timedelta
 import requests
 from bs4 import BeautifulSoup
+from PIL import Image  # Finviz 이미지를 Gemini에 전달하기 위한 라이브러리
 from google import genai
 from google.genai import types
 
@@ -155,7 +156,7 @@ for stock_key, info in dynamic_stocks.items():
 fx_path = capture_fx_tradingview("usdkrw_chart.png")
 finviz_path = capture_finviz_map("finviz_map.png")
 
-# 6. Gemini API 호출 (최근 다뤘던 종목 제외 조건 포함)
+# 6. Gemini API 호출 (텍스트 + Finviz 이미지 멀티모달 페이로드 구성)
 system_instruction = load_prompt("prompt.txt")
 user_prompt = f"""
 --- [종목 선정 주의사항] ---
@@ -167,7 +168,18 @@ user_prompt = f"""
 
 --- [미장 대시보드 Data] ---
 {us_raw[:3500]}
+
+첨부된 Finviz 섹터 맵 이미지를 분석하여 현재 시장의 업종별/테마별 강세와 약세를 구체적으로 반영해 주세요.
 """
+
+contents_payload = [user_prompt]
+if finviz_path and os.path.exists(finviz_path):
+    try:
+        finviz_img = Image.open(finviz_path)
+        contents_payload.append(finviz_img)
+        print("[Gemini] Finviz 맵 이미지 멀티모달 입력 준비 완료")
+    except Exception as e:
+        print(f"[경고] Finviz 이미지 로드 실패: {e}")
 
 models_to_try = ["gemini-3.5-flash-lite", "gemini-3.8-flash"]
 response = None
@@ -176,8 +188,12 @@ for model_name in models_to_try:
     print(f"[{model_name}] 호출 중...")
     try:
         response = client.models.generate_content(
-            model=model_name, contents=user_prompt,
-            config=types.GenerateContentConfig(system_instruction=system_instruction, temperature=0.75),
+            model=model_name,
+            contents=contents_payload,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=0.75
+            ),
         )
         if response and response.text:
             break
@@ -248,7 +264,6 @@ if "[특징주 분석]" in formatted_body:
             heading_line = block_lines[0].strip()
             stock_name_raw = re.sub(r'^\d+\.\s+', '', heading_line).strip()
             
-            # 오늘 다룬 종목 리스트에 추가
             for stock_key in dynamic_stocks.keys():
                 if stock_key.lower() in stock_name_raw.lower() or stock_name_raw.lower() in stock_key.lower():
                     if stock_key not in today_selected_stocks:
