@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timezone, timedelta
 import requests
 from bs4 import BeautifulSoup
-from PIL import Image  # Finviz 이미지를 Gemini에 전달하기 위한 라이브러리
+from PIL import Image  # 환율 및 Finviz 이미지를 Gemini에 전달하기 위한 라이브러리
 from google import genai
 from google.genai import types
 
@@ -29,7 +29,6 @@ else:
             except Exception as e:
                 print(f"[삭제 실패 무시] {f}: {e}")
 
-GITHUB_PAGES_BASE_URL = "https://dhlee090512-arch.github.io/autoblog/assets"
 current_timestamp = int(time.time())
 
 # 한국 시간(KST, UTC+9) 구하기
@@ -156,7 +155,7 @@ for stock_key, info in dynamic_stocks.items():
 fx_path = capture_fx_tradingview("usdkrw_chart.png")
 finviz_path = capture_finviz_map("finviz_map.png")
 
-# 6. Gemini API 호출 (텍스트 + Finviz 이미지 멀티모달 페이로드 구성)
+# 6. Gemini API 호출 (텍스트 + 환율 이미지 + Finviz 이미지 멀티모달 페이로드 구성)
 system_instruction = load_prompt("prompt.txt")
 user_prompt = f"""
 --- [종목 선정 주의사항] ---
@@ -169,10 +168,21 @@ user_prompt = f"""
 --- [미장 대시보드 Data] ---
 {us_raw[:3500]}
 
-첨부된 Finviz 섹터 맵 이미지를 분석하여 현재 시장의 업종별/테마별 강세와 약세를 구체적으로 반영해 주세요.
+첨부된 [환율 차트 이미지]와 [Finviz 섹터 맵 이미지]를 직접 분석하여, 환율의 실제 움직임 추세와 업종별/테마별 강세·약세를 본문에 구체적으로 반영해 주세요.
 """
 
 contents_payload = [user_prompt]
+
+# 환율 이미지 첨부
+if fx_path and os.path.exists(fx_path):
+    try:
+        fx_img = Image.open(fx_path)
+        contents_payload.append(fx_img)
+        print("[Gemini] 환율 차트 이미지 멀티모달 입력 준비 완료")
+    except Exception as e:
+        print(f"[경고] 환율 이미지 로드 실패: {e}")
+
+# Finviz 맵 이미지 첨부
 if finviz_path and os.path.exists(finviz_path):
     try:
         finviz_img = Image.open(finviz_path)
@@ -216,9 +226,9 @@ for line in lines:
 
 formatted_body = blog_text
 
-# 8. 이미지 HTML 미리 정의 및 주입
-fx_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/usdkrw_chart.png?t={current_timestamp}" alt="환율 차트"></div>' if fx_path else ""
-finviz_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/finviz_map.png?t={current_timestamp}" alt="Finviz 섹터 맵"></div>' if finviz_path else ""
+# 8. 이미지 HTML 상대 경로(`assets/...`) 적용 및 주입
+fx_html = f'<div class="img-box"><img src="assets/usdkrw_chart.png?t={current_timestamp}" alt="환율 차트"></div>' if fx_path else ""
+finviz_html = f'<div class="img-box"><img src="assets/finviz_map.png?t={current_timestamp}" alt="Finviz 섹터 맵"></div>' if finviz_path else ""
 
 if "[경제 이슈]" in formatted_body:
     formatted_body = re.sub(r'\(환율\s*사진\)', fx_html, formatted_body, flags=re.IGNORECASE)
@@ -287,7 +297,8 @@ if "[특징주 분석]" in formatted_body:
             
             if matched_info:
                 filename_only = os.path.basename(matched_info["path"])
-                stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{filename_only}?t={current_timestamp}" alt="{stock_name_raw} 차트"></div>'
+                # 상대 경로(assets/) 적용으로 미리보기에서 이미지 즉시 로드 보장
+                stock_html = f'<div class="img-box"><img src="assets/{filename_only}?t={current_timestamp}" alt="{stock_name_raw} 차트"></div>'
                 tv_url_text = matched_info["tv_url"]
                 
                 block_text = block_text.replace("(종목 차트)", stock_html)
