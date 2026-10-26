@@ -71,13 +71,13 @@ def save_stock_history(today_stocks):
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
-# 최근 다뤘던 종목들 로드
+# 최근 다뤘던 종목들 로드 및 블랙리스트 문자열 생성
 history_data = load_stock_history()
 recent_excluded_stocks = []
 for h in history_data:
     recent_excluded_stocks.extend(h["stocks"])
 recent_excluded_str = ", ".join(set(recent_excluded_stocks)) if recent_excluded_stocks else "없음"
-print(f"[종목 중복 방지] 최근 다룬 종목들: {recent_excluded_str}")
+print(f"[종목 중복 방지 블랙리스트] 최근 다룬 종목들: {recent_excluded_str}")
 
 # 4. 대시보드 크롤링 및 종목 동적 추출
 def fetch_dashboard_and_extract_stocks(kr_url, us_url):
@@ -155,12 +155,14 @@ for stock_key, info in dynamic_stocks.items():
 fx_path = capture_fx_tradingview("usdkrw_chart.png")
 finviz_path = capture_finviz_map("finviz_map.png")
 
-# 6. Gemini API 호출 (텍스트 + 환율 이미지 + Finviz 이미지 멀티모달 페이로드 구성)
+# 6. Gemini API 호출 (강력한 종목 블랙리스트 규칙 및 멀티모달 이미지 페이로드 구성)
 system_instruction = load_prompt("prompt.txt")
 user_prompt = f"""
---- [종목 선정 주의사항] ---
-최근 며칠 동안 이미 다뤘던 아래 종목들은 독자들의 피로도를 낮추기 위해 이번 포스팅에서는 가능한 한 제외하거나 비중을 낮추고, 대시보드에 있는 다른 신선한 종목들을 위주로 특징주를 선정해 주세요.
-- 최근 다뤘던 종목들: [{recent_excluded_str}]
+--- [🚨 절대 준수해야 할 종목 선정 규칙] ---
+1. 아래 **[선정 금지 종목 리스트]**에 있는 종목들은 **최근 5일 동안 이미 다뤘던 종목들**입니다. 이번 포스팅에서는 **이 종목들을 절대로 다시 선정하면 안 됩니다.**
+2. 반드시 국장/미장 대시보드 데이터에 있는 위 리스트에 없는 완전히 새로운 종목들 중에서 특징주를 골라주세요.
+
+- 🚫 **선정 금지 종목 리스트**: [{recent_excluded_str}]
 
 --- [국장 대시보드 Data] ---
 {kr_raw[:3500]}
@@ -297,7 +299,6 @@ if "[특징주 분석]" in formatted_body:
             
             if matched_info:
                 filename_only = os.path.basename(matched_info["path"])
-                # 상대 경로(assets/) 적용으로 미리보기에서 이미지 즉시 로드 보장
                 stock_html = f'<div class="img-box"><img src="assets/{filename_only}?t={current_timestamp}" alt="{stock_name_raw} 차트"></div>'
                 tv_url_text = matched_info["tv_url"]
                 
