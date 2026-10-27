@@ -40,8 +40,10 @@ jobs:
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
         
-        # assets, stock_history.json, blog_preview.html 등 변경된 모든 파일 반영
+        # 최신 상태 동기화 후 푸시
+        git pull origin ${{ github.ref_name }} --rebase || true
         git add -A
-        
         git commit -m "Auto-update blog preview, stock history, and charts [skip ci]" || exit 0
-        git push
+       
+        # 현재 브랜치로 확실하게 푸시
+        git push origin HEAD:${{ github.ref_name }}
