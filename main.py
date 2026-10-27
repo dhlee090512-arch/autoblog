@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timezone, timedelta
 import requests
 from bs4 import BeautifulSoup
-from PIL import Image  # 환율 및 Finviz 이미지를 Gemini에 전달하기 위한 라이브러리
+from PIL import Image
 from google import genai
 from google.genai import types
 
@@ -255,7 +255,7 @@ if "[경제 이슈]" in formatted_body:
         elif "기술주" in formatted_body:
             formatted_body = re.sub(r'([^\n]*기술주[^\n]*\n)', rf'{finviz_html}\n\1', formatted_body, count=1)
 
-# 10. [특징주 분석] 소제목 블록 단위 격리 치환 및 오늘 다룬 종목 추출
+# 10. [특징주 분석] 소제목 엄격 검증 및 차트 주입, 정제된 종목 히스토리 추출
 today_selected_stocks = []
 
 if "[특징주 분석]" in formatted_body:
@@ -266,7 +266,9 @@ if "[특징주 분석]" in formatted_body:
     feature_lines = feature_text.split("\n")
     heading_indices = []
     for idx, line in enumerate(feature_lines):
-        if re.match(r'^\d+\.\s+', line.strip()):
+        clean_line = line.strip()
+        # [핵심 수정] 숫자로 시작하되, 길이기 짧고(40자 미만) 마침표(.)가 없는 진짜 소제목 라인만 엄격하게 인정
+        if re.match(r'^\d+\.\s+', clean_line) and len(clean_line) < 40 and '.' not in clean_line[:-1]:
             heading_indices.append(idx)
             
     new_feature_blocks = []
@@ -283,11 +285,26 @@ if "[특징주 분석]" in formatted_body:
             heading_line = block_lines[0].strip()
             stock_name_raw = re.sub(r'^\d+\.\s+', '', heading_line).strip()
             
+            # 정식 대시보드 키와 매칭되는 경우에만 정확한 종목명만 히스토리에 추가
+            matched_stock_key = None
             for stock_key in dynamic_stocks.keys():
-                if stock_key.lower() in stock_name_raw.lower() or stock_name_raw.lower() in stock_key.lower():
-                    if stock_key not in today_selected_stocks:
-                        today_selected_stocks.append(stock_key)
+                sk_lower = stock_key.lower()
+                sn_lower = stock_name_raw.lower()
+                if sk_lower in sn_lower or sn_lower in sk_lower or sk_lower.replace(" ", "") in sn_lower.replace(" ", ""):
+                    matched_stock_key = stock_key
+                    break
+                # 에이리어스 검사
+                for alias in dynamic_stocks[stock_key]["aliases"]:
+                    if alias in sn_lower or sn_lower in alias:
+                        matched_stock_key = stock_key
+                        break
+                if matched_stock_key:
+                    break
             
+            if matched_stock_key and matched_stock_key not in today_selected_stocks:
+                today_selected_stocks.append(matched_stock_key)
+            
+            # 차트 주입 매칭
             search_term = stock_name_raw.lower()
             clean_search = re.sub(r',?\s*(Inc\.?|Corp\.?|Co\.?|Ltd\.?)$', '', search_term).strip()
             
@@ -317,7 +334,7 @@ if "[특징주 분석]" in formatted_body:
         feature_text = "\n".join(new_feature_blocks)
         formatted_body = intro_text + feature_text
 
-# 히스토리 저장
+# 히스토리 저장 (이제 깔끔한 종목명만 정상 저장됨)
 save_stock_history(today_selected_stocks)
 print(f"[종목 히스토리 저장 완료] 오늘 다룬 종목: {today_selected_stocks}")
 
