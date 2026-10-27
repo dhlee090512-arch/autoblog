@@ -71,7 +71,7 @@ def save_stock_history(today_stocks):
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
-# 최근 다뤘던 종목들 로드 및 블랙리스트 문자열 생성
+# 최근 다뤘던 종목들 로드 및 블랙리스트 목록 생성
 history_data = load_stock_history()
 recent_excluded_stocks = []
 for h in history_data:
@@ -155,20 +155,27 @@ for stock_key, info in dynamic_stocks.items():
 fx_path = capture_fx_tradingview("usdkrw_chart.png")
 finviz_path = capture_finviz_map("finviz_map.png")
 
-# 6. Gemini API 호출 (강력한 종목 블랙리스트 규칙 및 멀티모달 이미지 페이로드 구성)
+# 6. 대시보드 텍스트에서 최근 다뤘던 종목 원천 삭제(필터링) 처리
+filtered_kr_raw = kr_raw
+filtered_us_raw = us_raw
+
+for excluded_stock in recent_excluded_stocks:
+    if len(excluded_stock.strip()) > 1:
+        filtered_kr_raw = re.sub(rf'.*{re.escape(excluded_stock)}.*', '', filtered_kr_raw, flags=re.IGNORECASE)
+        filtered_us_raw = re.sub(rf'.*{re.escape(excluded_stock)}.*', '', filtered_us_raw, flags=re.IGNORECASE)
+
+# 7. Gemini API 호출 (필터링된 텍스트 + 멀티모달 이미지 페이로드 구성)
 system_instruction = load_prompt("prompt.txt")
 user_prompt = f"""
 --- [🚨 절대 준수해야 할 종목 선정 규칙] ---
-1. 아래 **[선정 금지 종목 리스트]**에 있는 종목들은 **최근 5일 동안 이미 다뤘던 종목들**입니다. 이번 포스팅에서는 **이 종목들을 절대로 다시 선정하면 안 됩니다.**
-2. 반드시 국장/미장 대시보드 데이터에 있는 위 리스트에 없는 완전히 새로운 종목들 중에서 특징주를 골라주세요.
+1. 아래 대시보드 데이터는 최근 5일 이내에 다뤘던 종목들이 완전히 필터링(삭제)된 상태입니다.
+2. 데이터에 남아있는 신선한 종목들 중에서만 특징주를 골라주세요.
 
-- 🚫 **선정 금지 종목 리스트**: [{recent_excluded_str}]
+--- [국장 대시보드 Data (필터링됨)] ---
+{filtered_kr_raw[:3500]}
 
---- [국장 대시보드 Data] ---
-{kr_raw[:3500]}
-
---- [미장 대시보드 Data] ---
-{us_raw[:3500]}
+--- [미장 대시보드 Data (필터링됨)] ---
+{filtered_us_raw[:3500]}
 
 첨부된 [환율 차트 이미지]와 [Finviz 섹터 맵 이미지]를 직접 분석하여, 환율의 실제 움직임 추세와 업종별/테마별 강세·약세를 본문에 구체적으로 반영해 주세요.
 """
@@ -217,7 +224,7 @@ if not response:
 
 blog_text = response.text
 
-# 7. 제목 및 본문 분리
+# 8. 제목 및 본문 분리
 post_title = "오늘의 경제 주요 흐름 및 특징주 분석"
 lines = blog_text.strip().split("\n")
 for line in lines:
@@ -228,7 +235,7 @@ for line in lines:
 
 formatted_body = blog_text
 
-# 8. 이미지 HTML 상대 경로(`assets/...`) 적용 및 주입
+# 9. 이미지 HTML 상대 경로(`assets/...`) 적용 및 주입
 fx_html = f'<div class="img-box"><img src="assets/usdkrw_chart.png?t={current_timestamp}" alt="환율 차트"></div>' if fx_path else ""
 finviz_html = f'<div class="img-box"><img src="assets/finviz_map.png?t={current_timestamp}" alt="Finviz 섹터 맵"></div>' if finviz_path else ""
 
@@ -248,7 +255,7 @@ if "[경제 이슈]" in formatted_body:
         elif "기술주" in formatted_body:
             formatted_body = re.sub(r'([^\n]*기술주[^\n]*\n)', rf'{finviz_html}\n\1', formatted_body, count=1)
 
-# 9. [특징주 분석] 소제목 블록 단위 격리 치환 및 오늘 다룬 종목 추출
+# 10. [특징주 분석] 소제목 블록 단위 격리 치환 및 오늘 다룬 종목 추출
 today_selected_stocks = []
 
 if "[특징주 분석]" in formatted_body:
@@ -314,7 +321,7 @@ if "[특징주 분석]" in formatted_body:
 save_stock_history(today_selected_stocks)
 print(f"[종목 히스토리 저장 완료] 오늘 다룬 종목: {today_selected_stocks}")
 
-# 10. HTML 미리보기 파일 생성
+# 11. HTML 미리보기 파일 생성
 html_body_formatted = formatted_body.replace("\n", "<br>")
 json_safe_clipboard_text = json.dumps(formatted_body)
 
