@@ -25,9 +25,9 @@ else:
         if os.path.isfile(file_path):
             try:
                 os.remove(file_path)
-                print(f"[삭제 완료] 이전 잔여 파일 제거: {f}")
+                print(f"[INIT] 이전 잔여 파일 제거: {f}")
             except Exception as e:
-                print(f"[삭제 실패 무시] {f}: {e}")
+                print(f"[INIT] 파일 제거 실패 무시 {f}: {e}")
 
 GITHUB_PAGES_BASE_URL = "https://dhlee090512-arch.github.io/autoblog/assets"
 current_timestamp = int(time.time())
@@ -49,7 +49,7 @@ def load_prompt(filename="prompt.txt"):
     with open(filename, "r", encoding="utf-8") as f:
         return f.read()
 
-# 3. 종목 히스토리 관리 (오염된 데이터 정화 기능 포함)
+# 3. 종목 히스토리 관리 (블랙리스트 오염 방지 정화 로직 포함)
 HISTORY_FILE = "stock_history.json"
 
 def load_stock_history():
@@ -59,12 +59,15 @@ def load_stock_history():
                 history = json.load(f)
                 cleaned_history = []
                 for h in history:
-                    # 30자가 넘는 비정상적인 문장은 블랙리스트에서 배제
+                    # 30자 미만의 순수 종목명만 유효 데이터로 인정
                     valid_stocks = [s for s in h.get("stocks", []) if len(s.strip()) < 30]
                     cleaned_history.append({"date": h["date"], "stocks": valid_stocks})
+                print(f"[HISTORY] 히스토리 로드 성공 (총 {len(cleaned_history)}일치)")
                 return cleaned_history
-        except:
+        except Exception as e:
+            print(f"[HISTORY] 히스토리 로드 오류 (초기화): {e}")
             return []
+    print("[HISTORY] 기존 history 파일 없음. 새로 시작합니다.")
     return []
 
 def save_stock_history(today_stocks):
@@ -72,21 +75,21 @@ def save_stock_history(today_stocks):
     today_str = datetime.now(kst).strftime("%Y-%m-%d")
     
     history = [h for h in history if h["date"] != today_str]
-    # 저장할 때도 30자 미만의 순수 종목명만 엄격하게 필터링
     valid_today_stocks = [s for s in today_stocks if len(s.strip()) < 30]
     history.append({"date": today_str, "stocks": valid_today_stocks})
-    history = history[-5:] # 최근 5일치만 유지
+    history = history[-5:] # 최근 5일치 유지
     
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
+    print(f"[HISTORY] 오늘 다룬 종목 저장 완료: {valid_today_stocks}")
 
 # 최근 다뤘던 종목들 로드 및 블랙리스트 목록 생성
 history_data = load_stock_history()
 recent_excluded_stocks = []
 for h in history_data:
     recent_excluded_stocks.extend(h["stocks"])
-recent_excluded_str = ", ".join(set(recent_excluded_stocks)) if recent_excluded_stocks else "없음"
-print(f"[종목 중복 방지 블랙리스트] 최근 다룬 종목들: {recent_excluded_str}")
+recent_excluded_stocks = list(set(recent_excluded_stocks))
+print(f"[BLACKLIST] 최근 다룬 종목 목록: {recent_excluded_stocks}")
 
 # 4. 대시보드 크롤링 및 종목 동적 추출
 def fetch_dashboard_and_extract_stocks(kr_url, us_url):
@@ -99,11 +102,13 @@ def fetch_dashboard_and_extract_stocks(kr_url, us_url):
         "DXY", "VIX", "WTI", "BRENT", "GOLD", "US10Y", "US02Y"
     }
 
+    print(f"[CRAWL] 국장 대시보드 요청: {kr_url}")
     res_kr = requests.get(kr_url, headers=headers)
     res_kr.raise_for_status()
     soup_kr = BeautifulSoup(res_kr.text, 'html.parser')
     kr_raw_text = soup_kr.get_text(separator="\n", strip=True)
 
+    print(f"[CRAWL] 미장 대시보드 요청: {us_url}")
     res_us = requests.get(us_url, headers=headers)
     res_us.raise_for_status()
     soup_us = BeautifulSoup(res_us.text, 'html.parser')
@@ -123,10 +128,12 @@ def fetch_dashboard_and_extract_stocks(kr_url, us_url):
                 "aliases": [clean_name.lower(), code.lower()]
             }
 
-    # 미장 종목
-    us_matches = re.findall(r'([가-힣A-Za-z0-9&\s,.]+)\s*[\(\[\{]([A-Z]{2,5})[\)\]\}]', us_raw_text)
+    # 미장 종목 (길이 25자 이하, 줄바꿈 없는 순수 티커 항목만 엄격 추출)
+    us_matches = re.findall(r'([A-Za-z0-9&\s,.-]{1,25})\s*[\(\[\{]([A-Z]{2,5})[\)\]\}]', us_raw_text)
     for name, ticker in us_matches:
         clean_name = name.strip()
+        if "\n" in clean_name or len(clean_name) > 25:
+            continue
         base_name = re.sub(r',?\s*(Inc\.?|Corp\.?|Co\.?|Ltd\.?)$', '', clean_name, flags=re.IGNORECASE).strip()
         extracted_stocks[clean_name] = {
             "tv_symbol": f"NASDAQ:{ticker}",
@@ -141,7 +148,7 @@ def fetch_dashboard_and_extract_stocks(kr_url, us_url):
             ]
         }
 
-    print(f"[동적 종목 추출 완료] 총 {len(extracted_stocks)}개: {list(extracted_stocks.keys())}")
+    print(f"[CRAWL] 추출된 유효 종목 총 {len(extracted_stocks)}개")
     return kr_raw_text, us_raw_text, extracted_stocks
 
 kr_url = "https://dhlee090512-arch.github.io/report/index.html"
@@ -162,7 +169,7 @@ for excluded_stock in recent_excluded_stocks:
         filtered_kr_raw = re.sub(rf'.*{re.escape(excluded_stock)}.*', '', filtered_kr_raw, flags=re.IGNORECASE)
         filtered_us_raw = re.sub(rf'.*{re.escape(excluded_stock)}.*', '', filtered_us_raw, flags=re.IGNORECASE)
 
-# 7. Gemini API 호출 (필터링된 텍스트 + 멀티모달 이미지 페이로드 구성)
+# 7. Gemini API 호출
 system_instruction = load_prompt("prompt.txt")
 user_prompt = f"""
 --- [🚨 절대 준수해야 할 종목 선정 규칙] ---
@@ -181,24 +188,18 @@ user_prompt = f"""
 contents_payload = [user_prompt]
 
 if fx_path and os.path.exists(fx_path):
-    try:
-        contents_payload.append(Image.open(fx_path))
-        print("[Gemini] 환율 차트 이미지 멀티모달 입력 준비 완료")
-    except Exception as e:
-        print(f"[경고] 환율 이미지 로드 실패: {e}")
+    contents_payload.append(Image.open(fx_path))
+    print("[GEMINI] 환율 차트 이미지 탑재 완료")
 
 if finviz_path and os.path.exists(finviz_path):
-    try:
-        contents_payload.append(Image.open(finviz_path))
-        print("[Gemini] Finviz 맵 이미지 멀티모달 입력 준비 완료")
-    except Exception as e:
-        print(f"[경고] Finviz 이미지 로드 실패: {e}")
+    contents_payload.append(Image.open(finviz_path))
+    print("[GEMINI] Finviz 맵 이미지 탑재 완료")
 
 models_to_try = ["gemini-3.5-flash-lite", "gemini-3.8-flash"]
 response = None
 
 for model_name in models_to_try:
-    print(f"[{model_name}] 호출 중...")
+    print(f"[GEMINI] 모델 호출 시도: {model_name}")
     try:
         response = client.models.generate_content(
             model=model_name,
@@ -209,12 +210,13 @@ for model_name in models_to_try:
             ),
         )
         if response and response.text:
+            print(f"[GEMINI] 모델 {model_name} 호출 성공!")
             break
     except Exception as e:
-        print(f"호출 에러: {e}")
+        print(f"[GEMINI] 모델 {model_name} 호출 에러: {e}")
 
 if not response:
-    raise RuntimeError("Gemini API 호출에 실패했습니다.")
+    raise RuntimeError("Gemini API 호출에 최종 실패했습니다.")
 
 blog_text = response.text
 
@@ -252,6 +254,8 @@ if "[특징주 분석]" in formatted_body:
         if re.match(r'^\d+\.\s+', clean_line) and len(clean_line) < 60 and '.' not in clean_line[:-1]:
             heading_indices.append(idx)
             
+    print(f"[MATCH] 감지된 특징주 소제목 개수: {len(heading_indices)}")
+    
     new_feature_blocks = []
     if heading_indices:
         new_feature_blocks.append("\n".join(feature_lines[:heading_indices[0]]))
@@ -266,12 +270,13 @@ if "[특징주 분석]" in formatted_body:
             heading_line = block_lines[0].strip()
             raw_stock_name = re.sub(r'^\d+\.\s+', '', heading_line).strip()
             
-            # [안전 장치] 소제목에 설명 문장이 길게 붙어있을 경우 첫 번째 쉼표나 마침표 이전까지만 종목명으로 추출
             if len(raw_stock_name) > 25:
                 raw_stock_name = re.split(r'[,.\s]+', raw_stock_name)[0]
             
             clean_search = re.sub(r',?\s*(Inc\.?|Corp\.?|Co\.?|Ltd\.?)$', '', raw_stock_name, flags=re.IGNORECASE).strip().lower()
             clean_search_no_space = clean_search.replace(" ", "")
+            
+            print(f"\n[MATCH] 소제목: '{heading_line}' -> 검색 키워드: '{raw_stock_name}'")
             
             matched_info = None
             matched_stock_key = None
@@ -283,6 +288,7 @@ if "[특징주 분석]" in formatted_body:
                 if sk_lower == clean_search or sk_no_space == clean_search_no_space or sk_lower in clean_search or clean_search in sk_lower:
                     matched_stock_key = stock_key
                     matched_info = info
+                    print(f"[MATCH] ✅ 대시보드 키 매칭 성공: '{stock_key}'")
                     break
                 
                 matched_alias = False
@@ -293,13 +299,14 @@ if "[특징주 분석]" in formatted_body:
                 if matched_alias:
                     matched_stock_key = stock_key
                     matched_info = info
+                    print(f"[MATCH] ✅ 대시보드 에이리어스 매칭 성공: '{stock_key}'")
                     break
             
             if matched_stock_key and matched_stock_key not in today_selected_stocks:
                 today_selected_stocks.append(matched_stock_key)
             
             if matched_info:
-                print(f"[실시간 차트 캡처] 매칭 성공 종목: {raw_stock_name} -> {matched_stock_key} ({matched_info['tv_symbol']})")
+                print(f"[CAPTURE] 실시간 차트 캡처 실행: {matched_info['tv_symbol']} -> {matched_info['filename']}")
                 res_path = capture_tradingview_chart(matched_info["tv_symbol"], matched_info["filename"])
                 if res_path:
                     filename_only = os.path.basename(res_path)
@@ -308,17 +315,20 @@ if "[특징주 분석]" in formatted_body:
                     
                     block_text = re.sub(r'\([^)]*(?:차트|이미지)[^)]*\)', stock_html, block_text, flags=re.IGNORECASE)
                     block_text = re.sub(r'\([^)]*(?:url|URL|링크|트레이딩뷰)[^)]*\)', tv_url_text, block_text, flags=re.IGNORECASE)
+                    print(f"[CAPTURE] 차트 캡처 및 HTML 치환 완료: {filename_only}")
+                else:
+                    print(f"[CAPTURE-ERROR] 캡처 실패 (None 반환): {matched_info['tv_symbol']}")
             else:
-                print(f"[오류] 종목 매칭 실패 (차트 캡처 생략됨): {raw_stock_name}")
+                print(f"[MATCH-FAIL] ❌ 매칭 실패: '{raw_stock_name}'와 일치하는 종목을 대시보드에서 찾지 못했습니다.")
             
             new_feature_blocks.append(block_text)
             
         feature_text = "\n".join(new_feature_blocks)
         formatted_body = intro_text + feature_text
 
-# 히스토리 저장 (오염된 데이터 정화 후 안전 저장)
+# 히스토리 저장
 save_stock_history(today_selected_stocks)
-print(f"[종목 히스토리 저장 완료] 오늘 다룬 종목: {today_selected_stocks}")
+print(f"[FINISH] 최종 처리 완료. 선택된 종목: {today_selected_stocks}")
 
 # 11. HTML 미리보기 파일 생성
 html_body_formatted = formatted_body.replace("\n", "<br>")
@@ -380,4 +390,4 @@ html_content = f"""<!DOCTYPE html>
 with open("blog_preview.html", "w", encoding="utf-8") as f:
     f.write(html_content)
 
-print("blog_preview.html 생성 완료!")
+print("[FINISH] blog_preview.html 생성 완료!")
