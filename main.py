@@ -141,22 +141,11 @@ us_url = "https://dhlee090512-arch.github.io/report/us_index.html"
 
 kr_raw, us_raw, dynamic_stocks = fetch_dashboard_and_extract_stocks(kr_url, us_url)
 
-# 5. 차트 및 에셋 사전 캡처
-generated_charts_map = {}
-for stock_key, info in dynamic_stocks.items():
-    res_path = capture_tradingview_chart(info["tv_symbol"], info["filename"])
-    if res_path:
-        tv_url = f"https://www.tradingview.com/symbols/{info['tv_url_code']}/"
-        generated_charts_map[stock_key] = {
-            "path": res_path,
-            "tv_url": tv_url,
-            "aliases": info["aliases"]
-        }
-
+# 5. 거시경제 차트(환율, Finviz) 사전 캡처
 fx_path = capture_fx_tradingview("usdkrw_chart.png")
 finviz_path = capture_finviz_map("finviz_map.png")
 
-# 6. 대시보드 텍스트에서 최근 다뤘던 종목 원천 삭제(필터링) 처리
+# 6. [핵심] 대시보드 텍스트에서 최근 다뤘던 종목들을 완전 삭제(필터링)하여 AI가 아예 볼 수 없도록 원천 차단
 filtered_kr_raw = kr_raw
 filtered_us_raw = us_raw
 
@@ -170,7 +159,7 @@ system_instruction = load_prompt("prompt.txt")
 user_prompt = f"""
 --- [🚨 절대 준수해야 할 종목 선정 규칙] ---
 1. 아래 대시보드 데이터는 최근 5일 이내에 다뤘던 종목들이 완전히 필터링(삭제)된 상태입니다.
-2. 데이터에 남아있는 신선한 종목들 중에서만 특징주를 골라주세요.
+2. 데이터에 남아있는 신선한 종목들 중에서만 특징주를 골라주세요. 절대로 최근 다룬 종목을 반복해서 선택하지 마세요.
 
 --- [국장 대시보드 Data (필터링됨)] ---
 {filtered_kr_raw[:3500]}
@@ -183,20 +172,16 @@ user_prompt = f"""
 
 contents_payload = [user_prompt]
 
-# 환율 이미지 첨부
 if fx_path and os.path.exists(fx_path):
     try:
-        fx_img = Image.open(fx_path)
-        contents_payload.append(fx_img)
+        contents_payload.append(Image.open(fx_path))
         print("[Gemini] 환율 차트 이미지 멀티모달 입력 준비 완료")
     except Exception as e:
         print(f"[경고] 환율 이미지 로드 실패: {e}")
 
-# Finviz 맵 이미지 첨부
 if finviz_path and os.path.exists(finviz_path):
     try:
-        finviz_img = Image.open(finviz_path)
-        contents_payload.append(finviz_img)
+        contents_payload.append(Image.open(finviz_path))
         print("[Gemini] Finviz 맵 이미지 멀티모달 입력 준비 완료")
     except Exception as e:
         print(f"[경고] Finviz 이미지 로드 실패: {e}")
@@ -236,29 +221,16 @@ for line in lines:
 
 formatted_body = blog_text
 
-# 9. 이미지 HTML 절대 경로(GitHub Pages) 적용 및 주입
+# 9. 거시경제 이슈 파트 이미지 치환
 fx_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/usdkrw_chart.png?t={current_timestamp}" alt="환율 차트"></div>' if fx_path else ""
 finviz_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/finviz_map.png?t={current_timestamp}" alt="Finviz 섹터 맵"></div>' if finviz_path else ""
 
 if "[경제 이슈]" in formatted_body:
-    formatted_body = re.sub(r'\(환율\s*사진\)', fx_html, formatted_body, flags=re.IGNORECASE)
-    formatted_body = re.sub(r'\(finviz\s*사진\)', finviz_html, formatted_body, flags=re.IGNORECASE)
+    formatted_body = re.sub(r'\([^)]*환율[^)]*\)', fx_html, formatted_body, flags=re.IGNORECASE)
+    formatted_body = re.sub(r'\([^)]*finviz[^)]*\)', finviz_html, formatted_body, flags=re.IGNORECASE)
 
-    if fx_html and fx_html not in formatted_body:
-        if "우상향 추세입니다" in formatted_body:
-            formatted_body = re.sub(r'([^\n]*우상향 추세입니다[^\n]*\n)', rf'\1\n{fx_html}\n', formatted_body, count=1)
-        elif "환율" in formatted_body:
-            formatted_body = re.sub(r'([^\n]*환율[^\n]*\n)', rf'{fx_html}\n\1', formatted_body, count=1)
-
-    if finviz_html and finviz_html not in formatted_body:
-        if "전반적인 테마" in formatted_body:
-            formatted_body = re.sub(r'([^\n]*전반적인 테마[^\n]*\n)', rf'{finviz_html}\n\1', formatted_body, count=1)
-        elif "기술주" in formatted_body:
-            formatted_body = re.sub(r'([^\n]*기술주[^\n]*\n)', rf'{finviz_html}\n\1', formatted_body, count=1)
-
-# 10. [특징주 분석] 소제목 엄격 검증 및 차트 주입 (순차 Fallback 매칭 적용)
+# 10. [특징주 분석] 파트 분석 및 실시간 종목 차트 캡처 및 주입
 today_selected_stocks = []
-available_chart_infos = list(generated_charts_map.values())
 
 if "[특징주 분석]" in formatted_body:
     main_parts = formatted_body.split("[특징주 분석]")
@@ -287,52 +259,41 @@ if "[특징주 분석]" in formatted_body:
             stock_name_raw = re.sub(r'^\d+\.\s+', '', heading_line).strip()
             
             # 정식 대시보드 키 매칭
+            matched_info = None
             matched_stock_key = None
-            for stock_key in dynamic_stocks.keys():
+            
+            for stock_key, info in dynamic_stocks.items():
                 sk_lower = stock_key.lower()
                 sn_lower = stock_name_raw.lower()
+                matched = False
                 if sk_lower in sn_lower or sn_lower in sk_lower or sk_lower.replace(" ", "") in sn_lower.replace(" ", ""):
+                    matched = True
+                else:
+                    for alias in info["aliases"]:
+                        if alias in sn_lower or sn_lower in alias:
+                            matched = True
+                            break
+                if matched:
                     matched_stock_key = stock_key
-                    break
-                for alias in dynamic_stocks[stock_key]["aliases"]:
-                    if alias in sn_lower or sn_lower in alias:
-                        matched_stock_key = stock_key
-                        break
-                if matched_stock_key:
+                    matched_info = info
                     break
             
             if matched_stock_key and matched_stock_key not in today_selected_stocks:
                 today_selected_stocks.append(matched_stock_key)
             
-            # 이름 매칭 시도 후, 실패하더라도 순서(i번째 블록)에 맞게 캡처된 차트를 무조건 매칭하는 Fallback 적용
-            matched_info = None
-            search_term = stock_name_raw.lower()
-            clean_search = re.sub(r',?\s*(Inc\.?|Corp\.?|Co\.?|Ltd\.?)$', '', search_term).strip()
-            
-            for stock_key, info in generated_charts_map.items():
-                sk_lower = stock_key.lower()
-                if sk_lower in clean_search or clean_search in sk_lower or clean_search in sk_lower.replace(" ", ""):
-                    matched_info = info
-                    break
-                for alias in info["aliases"]:
-                    if alias in clean_search or clean_search in alias:
-                        matched_info = info
-                        break
-                if matched_info:
-                    break
-            
-            if not matched_info and i < len(available_chart_infos):
-                matched_info = available_chart_infos[i]
-            
+            # 매칭된 종목이 있다면 지금 바로 해당 차트 캡처 수행
             if matched_info:
-                filename_only = os.path.basename(matched_info["path"])
-                stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{filename_only}?t={current_timestamp}" alt="{stock_name_raw} 차트"></div>'
-                tv_url_text = matched_info["tv_url"]
-                
-                for ph in ["(종목 차트)", "(종목차트)", "[종목 차트]", "(종목-차트)"]:
-                    block_text = block_text.replace(ph, stock_html)
-                for uph in ["(종목 트레이딩뷰 url)", "(트레이딩뷰 url)", "(트레이딩뷰 URL)"]:
-                    block_text = block_text.replace(uph, tv_url_text)
+                print(f"[실시간 차트 캡처] 선택된 종목: {stock_name_raw} ({matched_info['tv_symbol']})")
+                res_path = capture_tradingview_chart(matched_info["tv_symbol"], matched_info["filename"])
+                if res_path:
+                    filename_only = os.path.basename(res_path)
+                    stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{filename_only}?t={current_timestamp}" alt="{stock_name_raw} 차트"></div>'
+                    tv_url_text = f"https://www.tradingview.com/symbols/{matched_info['tv_url_code']}/"
+                    
+                    block_text = re.sub(r'\([^)]*(?:차트|이미지)[^)]*\)', stock_html, block_text, flags=re.IGNORECASE)
+                    block_text = re.sub(r'\([^)]*(?:url|URL|링크|트레이딩뷰)[^)]*\)', tv_url_text, block_text, flags=re.IGNORECASE)
+            else:
+                print(f"[경고] 종목 매칭 실패: {stock_name_raw}")
             
             new_feature_blocks.append(block_text)
             
