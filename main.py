@@ -49,14 +49,20 @@ def load_prompt(filename="prompt.txt"):
     with open(filename, "r", encoding="utf-8") as f:
         return f.read()
 
-# 3. 종목 히스토리 관리 (최근 5일간 다룬 종목 기록)
+# 3. 종목 히스토리 관리 (오염된 데이터 정화 기능 포함)
 HISTORY_FILE = "stock_history.json"
 
 def load_stock_history():
     if os.path.exists(HISTORY_FILE):
         try:
             with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                history = json.load(f)
+                cleaned_history = []
+                for h in history:
+                    # 30자가 넘는 비정상적인 문장은 블랙리스트에서 배제
+                    valid_stocks = [s for s in h.get("stocks", []) if len(s.strip()) < 30]
+                    cleaned_history.append({"date": h["date"], "stocks": valid_stocks})
+                return cleaned_history
         except:
             return []
     return []
@@ -66,7 +72,9 @@ def save_stock_history(today_stocks):
     today_str = datetime.now(kst).strftime("%Y-%m-%d")
     
     history = [h for h in history if h["date"] != today_str]
-    history.append({"date": today_str, "stocks": today_stocks})
+    # 저장할 때도 30자 미만의 순수 종목명만 엄격하게 필터링
+    valid_today_stocks = [s for s in today_stocks if len(s.strip()) < 30]
+    history.append({"date": today_str, "stocks": valid_today_stocks})
     history = history[-5:] # 최근 5일치만 유지
     
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
@@ -241,7 +249,7 @@ if "[특징주 분석]" in formatted_body:
     heading_indices = []
     for idx, line in enumerate(feature_lines):
         clean_line = line.strip()
-        if re.match(r'^\d+\.\s+', clean_line) and len(clean_line) < 40 and '.' not in clean_line[:-1]:
+        if re.match(r'^\d+\.\s+', clean_line) and len(clean_line) < 60 and '.' not in clean_line[:-1]:
             heading_indices.append(idx)
             
     new_feature_blocks = []
@@ -256,10 +264,13 @@ if "[특징주 분석]" in formatted_body:
             block_text = "\n".join(block_lines)
             
             heading_line = block_lines[0].strip()
-            stock_name_raw = re.sub(r'^\d+\.\s+', '', heading_line).strip()
+            raw_stock_name = re.sub(r'^\d+\.\s+', '', heading_line).strip()
             
-            # [정밀 매칭 로직] 공백, 대소문자, 법인 형태 제거 후 엄격 매칭
-            clean_search = re.sub(r',?\s*(Inc\.?|Corp\.?|Co\.?|Ltd\.?)$', '', stock_name_raw, flags=re.IGNORECASE).strip().lower()
+            # [안전 장치] 소제목에 설명 문장이 길게 붙어있을 경우 첫 번째 쉼표나 마침표 이전까지만 종목명으로 추출
+            if len(raw_stock_name) > 25:
+                raw_stock_name = re.split(r'[,.\s]+', raw_stock_name)[0]
+            
+            clean_search = re.sub(r',?\s*(Inc\.?|Corp\.?|Co\.?|Ltd\.?)$', '', raw_stock_name, flags=re.IGNORECASE).strip().lower()
             clean_search_no_space = clean_search.replace(" ", "")
             
             matched_info = None
@@ -269,13 +280,11 @@ if "[특징주 분석]" in formatted_body:
                 sk_lower = stock_key.lower()
                 sk_no_space = sk_lower.replace(" ", "")
                 
-                # 1. 키 이름 직접 비교 (공백/대소문자 무시)
                 if sk_lower == clean_search or sk_no_space == clean_search_no_space or sk_lower in clean_search or clean_search in sk_lower:
                     matched_stock_key = stock_key
                     matched_info = info
                     break
                 
-                # 2. 에이리어스(티커 등) 비교
                 matched_alias = False
                 for alias in info["aliases"]:
                     if alias == clean_search or alias == clean_search_no_space or alias in clean_search or clean_search in alias:
@@ -289,26 +298,25 @@ if "[특징주 분석]" in formatted_body:
             if matched_stock_key and matched_stock_key not in today_selected_stocks:
                 today_selected_stocks.append(matched_stock_key)
             
-            # 정밀 매칭된 경우에만 차트 캡처 수행 (강제 Fallback 제거)
             if matched_info:
-                print(f"[실시간 차트 캡처] 매칭 성공 종목: {stock_name_raw} -> {matched_stock_key} ({matched_info['tv_symbol']})")
+                print(f"[실시간 차트 캡처] 매칭 성공 종목: {raw_stock_name} -> {matched_stock_key} ({matched_info['tv_symbol']})")
                 res_path = capture_tradingview_chart(matched_info["tv_symbol"], matched_info["filename"])
                 if res_path:
                     filename_only = os.path.basename(res_path)
-                    stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{filename_only}?t={current_timestamp}" alt="{stock_name_raw} 차트"></div>'
+                    stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{filename_only}?t={current_timestamp}" alt="{raw_stock_name} 차트"></div>'
                     tv_url_text = f"https://www.tradingview.com/symbols/{matched_info['tv_url_code']}/"
                     
                     block_text = re.sub(r'\([^)]*(?:차트|이미지)[^)]*\)', stock_html, block_text, flags=re.IGNORECASE)
                     block_text = re.sub(r'\([^)]*(?:url|URL|링크|트레이딩뷰)[^)]*\)', tv_url_text, block_text, flags=re.IGNORECASE)
             else:
-                print(f"[오류] 종목 매칭 실패 (차트 캡처 생략됨): {stock_name_raw}")
+                print(f"[오류] 종목 매칭 실패 (차트 캡처 생략됨): {raw_stock_name}")
             
             new_feature_blocks.append(block_text)
             
         feature_text = "\n".join(new_feature_blocks)
         formatted_body = intro_text + feature_text
 
-# 히스토리 저장
+# 히스토리 저장 (오염된 데이터 정화 후 안전 저장)
 save_stock_history(today_selected_stocks)
 print(f"[종목 히스토리 저장 완료] 오늘 다룬 종목: {today_selected_stocks}")
 
