@@ -29,6 +29,7 @@ else:
             except Exception as e:
                 print(f"[삭제 실패 무시] {f}: {e}")
 
+GITHUB_PAGES_BASE_URL = "https://dhlee090512-arch.github.io/autoblog/assets"
 current_timestamp = int(time.time())
 
 # 한국 시간(KST, UTC+9) 구하기
@@ -235,9 +236,9 @@ for line in lines:
 
 formatted_body = blog_text
 
-# 9. 이미지 HTML 상대 경로(`assets/...`) 적용 및 주입
-fx_html = f'<div class="img-box"><img src="assets/usdkrw_chart.png?t={current_timestamp}" alt="환율 차트"></div>' if fx_path else ""
-finviz_html = f'<div class="img-box"><img src="assets/finviz_map.png?t={current_timestamp}" alt="Finviz 섹터 맵"></div>' if finviz_path else ""
+# 9. 이미지 HTML 절대 경로(GitHub Pages) 적용 및 주입
+fx_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/usdkrw_chart.png?t={current_timestamp}" alt="환율 차트"></div>' if fx_path else ""
+finviz_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/finviz_map.png?t={current_timestamp}" alt="Finviz 섹터 맵"></div>' if finviz_path else ""
 
 if "[경제 이슈]" in formatted_body:
     formatted_body = re.sub(r'\(환율\s*사진\)', fx_html, formatted_body, flags=re.IGNORECASE)
@@ -303,7 +304,7 @@ if "[특징주 분석]" in formatted_body:
             if matched_stock_key and matched_stock_key not in today_selected_stocks:
                 today_selected_stocks.append(matched_stock_key)
             
-            # [핵심 수정] 이름 매칭 시도 후, 실패하더라도 순서(i번째 블록)에 맞게 캡처된 차트를 무조건 매칭하는 Fallback 적용
+            # 이름 매칭 시도 후, 실패하더라도 순서(i번째 블록)에 맞게 캡처된 차트를 무조건 매칭하는 Fallback 적용
             matched_info = None
             search_term = stock_name_raw.lower()
             clean_search = re.sub(r',?\s*(Inc\.?|Corp\.?|Co\.?|Ltd\.?)$', '', search_term).strip()
@@ -320,16 +321,14 @@ if "[특징주 분석]" in formatted_body:
                 if matched_info:
                     break
             
-            # 이름 매칭 실패 시 순서 기반 Fallback 적용
             if not matched_info and i < len(available_chart_infos):
                 matched_info = available_chart_infos[i]
             
             if matched_info:
                 filename_only = os.path.basename(matched_info["path"])
-                stock_html = f'<div class="img-box"><img src="assets/{filename_only}?t={current_timestamp}" alt="{stock_name_raw} 차트"></div>'
+                stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{filename_only}?t={current_timestamp}" alt="{stock_name_raw} 차트"></div>'
                 tv_url_text = matched_info["tv_url"]
                 
-                # 다양한 플레이스홀더 형태 모두 대응하여 치환
                 for ph in ["(종목 차트)", "(종목차트)", "[종목 차트]", "(종목-차트)"]:
                     block_text = block_text.replace(ph, stock_html)
                 for uph in ["(종목 트레이딩뷰 url)", "(트레이딩뷰 url)", "(트레이딩뷰 URL)"]:
