@@ -255,8 +255,9 @@ if "[경제 이슈]" in formatted_body:
         elif "기술주" in formatted_body:
             formatted_body = re.sub(r'([^\n]*기술주[^\n]*\n)', rf'{finviz_html}\n\1', formatted_body, count=1)
 
-# 10. [특징주 분석] 소제목 엄격 검증 및 차트 주입, 정제된 종목 히스토리 추출
+# 10. [특징주 분석] 소제목 엄격 검증 및 차트 주입 (순차 Fallback 매칭 적용)
 today_selected_stocks = []
+available_chart_infos = list(generated_charts_map.values())
 
 if "[특징주 분석]" in formatted_body:
     main_parts = formatted_body.split("[특징주 분석]")
@@ -267,7 +268,6 @@ if "[특징주 분석]" in formatted_body:
     heading_indices = []
     for idx, line in enumerate(feature_lines):
         clean_line = line.strip()
-        # [핵심 수정] 숫자로 시작하되, 길이기 짧고(40자 미만) 마침표(.)가 없는 진짜 소제목 라인만 엄격하게 인정
         if re.match(r'^\d+\.\s+', clean_line) and len(clean_line) < 40 and '.' not in clean_line[:-1]:
             heading_indices.append(idx)
             
@@ -285,7 +285,7 @@ if "[특징주 분석]" in formatted_body:
             heading_line = block_lines[0].strip()
             stock_name_raw = re.sub(r'^\d+\.\s+', '', heading_line).strip()
             
-            # 정식 대시보드 키와 매칭되는 경우에만 정확한 종목명만 히스토리에 추가
+            # 정식 대시보드 키 매칭
             matched_stock_key = None
             for stock_key in dynamic_stocks.keys():
                 sk_lower = stock_key.lower()
@@ -293,7 +293,6 @@ if "[특징주 분석]" in formatted_body:
                 if sk_lower in sn_lower or sn_lower in sk_lower or sk_lower.replace(" ", "") in sn_lower.replace(" ", ""):
                     matched_stock_key = stock_key
                     break
-                # 에이리어스 검사
                 for alias in dynamic_stocks[stock_key]["aliases"]:
                     if alias in sn_lower or sn_lower in alias:
                         matched_stock_key = stock_key
@@ -304,11 +303,11 @@ if "[특징주 분석]" in formatted_body:
             if matched_stock_key and matched_stock_key not in today_selected_stocks:
                 today_selected_stocks.append(matched_stock_key)
             
-            # 차트 주입 매칭
+            # [핵심 수정] 이름 매칭 시도 후, 실패하더라도 순서(i번째 블록)에 맞게 캡처된 차트를 무조건 매칭하는 Fallback 적용
+            matched_info = None
             search_term = stock_name_raw.lower()
             clean_search = re.sub(r',?\s*(Inc\.?|Corp\.?|Co\.?|Ltd\.?)$', '', search_term).strip()
             
-            matched_info = None
             for stock_key, info in generated_charts_map.items():
                 sk_lower = stock_key.lower()
                 if sk_lower in clean_search or clean_search in sk_lower or clean_search in sk_lower.replace(" ", ""):
@@ -321,20 +320,27 @@ if "[특징주 분석]" in formatted_body:
                 if matched_info:
                     break
             
+            # 이름 매칭 실패 시 순서 기반 Fallback 적용
+            if not matched_info and i < len(available_chart_infos):
+                matched_info = available_chart_infos[i]
+            
             if matched_info:
                 filename_only = os.path.basename(matched_info["path"])
                 stock_html = f'<div class="img-box"><img src="assets/{filename_only}?t={current_timestamp}" alt="{stock_name_raw} 차트"></div>'
                 tv_url_text = matched_info["tv_url"]
                 
-                block_text = block_text.replace("(종목 차트)", stock_html)
-                block_text = block_text.replace("(종목 트레이딩뷰 url)", tv_url_text)
+                # 다양한 플레이스홀더 형태 모두 대응하여 치환
+                for ph in ["(종목 차트)", "(종목차트)", "[종목 차트]", "(종목-차트)"]:
+                    block_text = block_text.replace(ph, stock_html)
+                for uph in ["(종목 트레이딩뷰 url)", "(트레이딩뷰 url)", "(트레이딩뷰 URL)"]:
+                    block_text = block_text.replace(uph, tv_url_text)
             
             new_feature_blocks.append(block_text)
             
         feature_text = "\n".join(new_feature_blocks)
         formatted_body = intro_text + feature_text
 
-# 히스토리 저장 (이제 깔끔한 종목명만 정상 저장됨)
+# 히스토리 저장
 save_stock_history(today_selected_stocks)
 print(f"[종목 히스토리 저장 완료] 오늘 다룬 종목: {today_selected_stocks}")
 
