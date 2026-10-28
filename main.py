@@ -145,7 +145,7 @@ kr_raw, us_raw, dynamic_stocks = fetch_dashboard_and_extract_stocks(kr_url, us_u
 fx_path = capture_fx_tradingview("usdkrw_chart.png")
 finviz_path = capture_finviz_map("finviz_map.png")
 
-# 6. [핵심] 대시보드 텍스트에서 최근 다뤘던 종목들을 완전 삭제(필터링)하여 AI가 아예 볼 수 없도록 원천 차단
+# 6. 대시보드 텍스트에서 최근 다뤘던 종목 원천 삭제(필터링) 처리
 filtered_kr_raw = kr_raw
 filtered_us_raw = us_raw
 
@@ -229,7 +229,7 @@ if "[경제 이슈]" in formatted_body:
     formatted_body = re.sub(r'\([^)]*환율[^)]*\)', fx_html, formatted_body, flags=re.IGNORECASE)
     formatted_body = re.sub(r'\([^)]*finviz[^)]*\)', finviz_html, formatted_body, flags=re.IGNORECASE)
 
-# 10. [특징주 분석] 파트 분석 및 실시간 종목 차트 캡처 및 주입
+# 10. [특징주 분석] 파트 분석 및 정밀 매칭을 통한 실시간 종목 차트 캡처 및 주입
 today_selected_stocks = []
 
 if "[특징주 분석]" in formatted_body:
@@ -258,22 +258,30 @@ if "[특징주 분석]" in formatted_body:
             heading_line = block_lines[0].strip()
             stock_name_raw = re.sub(r'^\d+\.\s+', '', heading_line).strip()
             
-            # 정식 대시보드 키 매칭
+            # [정밀 매칭 로직] 공백, 대소문자, 법인 형태 제거 후 엄격 매칭
+            clean_search = re.sub(r',?\s*(Inc\.?|Corp\.?|Co\.?|Ltd\.?)$', '', stock_name_raw, flags=re.IGNORECASE).strip().lower()
+            clean_search_no_space = clean_search.replace(" ", "")
+            
             matched_info = None
             matched_stock_key = None
             
             for stock_key, info in dynamic_stocks.items():
                 sk_lower = stock_key.lower()
-                sn_lower = stock_name_raw.lower()
-                matched = False
-                if sk_lower in sn_lower or sn_lower in sk_lower or sk_lower.replace(" ", "") in sn_lower.replace(" ", ""):
-                    matched = True
-                else:
-                    for alias in info["aliases"]:
-                        if alias in sn_lower or sn_lower in alias:
-                            matched = True
-                            break
-                if matched:
+                sk_no_space = sk_lower.replace(" ", "")
+                
+                # 1. 키 이름 직접 비교 (공백/대소문자 무시)
+                if sk_lower == clean_search or sk_no_space == clean_search_no_space or sk_lower in clean_search or clean_search in sk_lower:
+                    matched_stock_key = stock_key
+                    matched_info = info
+                    break
+                
+                # 2. 에이리어스(티커 등) 비교
+                matched_alias = False
+                for alias in info["aliases"]:
+                    if alias == clean_search or alias == clean_search_no_space or alias in clean_search or clean_search in alias:
+                        matched_alias = True
+                        break
+                if matched_alias:
                     matched_stock_key = stock_key
                     matched_info = info
                     break
@@ -281,9 +289,9 @@ if "[특징주 분석]" in formatted_body:
             if matched_stock_key and matched_stock_key not in today_selected_stocks:
                 today_selected_stocks.append(matched_stock_key)
             
-            # 매칭된 종목이 있다면 지금 바로 해당 차트 캡처 수행
+            # 정밀 매칭된 경우에만 차트 캡처 수행 (강제 Fallback 제거)
             if matched_info:
-                print(f"[실시간 차트 캡처] 선택된 종목: {stock_name_raw} ({matched_info['tv_symbol']})")
+                print(f"[실시간 차트 캡처] 매칭 성공 종목: {stock_name_raw} -> {matched_stock_key} ({matched_info['tv_symbol']})")
                 res_path = capture_tradingview_chart(matched_info["tv_symbol"], matched_info["filename"])
                 if res_path:
                     filename_only = os.path.basename(res_path)
@@ -293,7 +301,7 @@ if "[특징주 분석]" in formatted_body:
                     block_text = re.sub(r'\([^)]*(?:차트|이미지)[^)]*\)', stock_html, block_text, flags=re.IGNORECASE)
                     block_text = re.sub(r'\([^)]*(?:url|URL|링크|트레이딩뷰)[^)]*\)', tv_url_text, block_text, flags=re.IGNORECASE)
             else:
-                print(f"[경고] 종목 매칭 실패: {stock_name_raw}")
+                print(f"[오류] 종목 매칭 실패 (차트 캡처 생략됨): {stock_name_raw}")
             
             new_feature_blocks.append(block_text)
             
