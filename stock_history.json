@@ -1,14 +1,5 @@
 [
   {
-    "date": "2026-10-24",
-    "stocks": [
-      "HLB",
-      "삼성바이오로직스",
-      "NVIDIA Corporation",
-      "Tesla, Inc."
-    ]
-  },
-  {
     "date": "2026-10-25",
     "stocks": [
       "HLB",
@@ -37,6 +28,10 @@
   },
   {
     "date": "2026-10-28",
+    "stocks": []
+  },
+  {
+    "date": "2026-10-29",
     "stocks": []
   }
 ]
