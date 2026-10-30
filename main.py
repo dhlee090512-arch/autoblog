@@ -49,7 +49,7 @@ def load_prompt(filename="prompt.txt"):
     with open(filename, "r", encoding="utf-8") as f:
         return f.read()
 
-# 3. 종목 히스토리 관리 (오염된 긴 본문 텍스트 유입 방지 정화 로직 포함)
+# 3. 종목 히스토리 관리 (순수 티커/코드 중심으로 관리 및 오염 방지)
 HISTORY_FILE = "stock_history.json"
 
 def load_stock_history():
@@ -59,36 +59,35 @@ def load_stock_history():
                 history = json.load(f)
                 cleaned_history = []
                 for h in history:
-                    # 30자 미만의 순수 종목명/티커만 유효 데이터로 인정
-                    valid_stocks = [s for s in h.get("stocks", []) if len(s.strip()) < 30]
-                    cleaned_history.append({"date": h["date"], "stocks": valid_stocks})
+                    # 10자 이내의 순수 티커/코드만 유효 데이터로 인정
+                    valid_codes = [c for c in h.get("stocks", []) if len(c.strip()) < 10]
+                    cleaned_history.append({"date": h["date"], "stocks": valid_codes})
                 return cleaned_history
         except:
             return []
     return []
 
-def save_stock_history(today_stocks):
+def save_stock_history(today_codes):
     history = load_stock_history()
     today_str = current_dt.strftime("%Y-%m-%d")
     
     history = [h for h in history if h["date"] != today_str]
-    valid_today_stocks = [s for s in today_stocks if len(s.strip()) < 30]
-    history.append({"date": today_str, "stocks": valid_today_stocks})
+    valid_today_codes = [c for c in today_codes if len(c.strip()) < 10]
+    history.append({"date": today_str, "stocks": valid_today_codes})
     history = history[-5:] # 최근 5일치만 유지
     
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
-# 최근 다뤘던 종목들 로드 및 정화된 블랙리스트 구성
+# 최근 다뤘던 티커/코드 불러오기
 history_data = load_stock_history()
-recent_excluded_stocks = []
+recent_excluded_codes = []
 for h in history_data:
-    recent_excluded_stocks.extend(h["stocks"])
-recent_excluded_stocks = list(set(recent_excluded_stocks))
-recent_excluded_str = ", ".join(recent_excluded_stocks) if recent_excluded_stocks else "없음"
-print(f"[종목 중복 방지] 최근 다룬 종목들: {recent_excluded_str}")
+    recent_excluded_codes.extend(h.get("stocks", []))
+recent_excluded_codes = list(set(recent_excluded_codes))
+print(f"[종목 중복 방지] 최근 다뤘던 티커/코드 목록: {recent_excluded_codes if recent_excluded_codes else '없음'}")
 
-# 4. 대시보드 크롤링 및 종목 동적 추출 (티커/코드 매핑 사전 구축)
+# 4. 대시보드 크롤링 및 종목 동적 추출
 def fetch_dashboard_and_extract_stocks(kr_url, us_url):
     headers = {"User-Agent": "Mozilla/5.0"}
     
@@ -111,7 +110,6 @@ def fetch_dashboard_and_extract_stocks(kr_url, us_url):
 
     extracted_stocks = {}
 
-    # 국장 종목 (종목명 + 6자리 코드 괄호 형태)
     kr_matches = re.findall(r'([가-힣A-Za-z0-9&]+)\s*[\(\[\{](\d{6})[\)\]\}]', kr_raw_text)
     for name, code in kr_matches:
         clean_name = name.strip()
@@ -125,11 +123,10 @@ def fetch_dashboard_and_extract_stocks(kr_url, us_url):
                 "code": code
             }
 
-    # 미장 종목 (종목명 + 대문자 티커 괄호 형태)
     us_matches = re.findall(r'([가-힣A-Za-z0-9&\s,.]+)\s*[\(\[\{]([A-Z]{2,5})[\)\]\}]', us_raw_text)
     for name, ticker in us_matches:
         clean_name = name.strip()
-        if len(clean_name) > 30: # 너무 긴 텍스트 오탐지 방지
+        if len(clean_name) > 30:
             continue
         key_id = f"NASDAQ:{ticker}"
         extracted_stocks[key_id] = {
@@ -148,32 +145,29 @@ us_url = "https://dhlee090512-arch.github.io/report/us_index.html"
 
 kr_raw, us_raw, dynamic_stocks = fetch_dashboard_and_extract_stocks(kr_url, us_url)
 
-# 5. 최근 다뤘던 종목 원천 필터링 (대시보드 텍스트에서 아예 지워버림)
+# 5. 최근 다뤘던 티커/코드를 기준으로 대시보드 텍스트 원천 필터링
 filtered_kr_raw = kr_raw
 filtered_us_raw = us_raw
 
-for excluded_stock in recent_excluded_stocks:
-    if len(excluded_stock.strip()) > 1:
-        filtered_kr_raw = re.sub(rf'.*{re.escape(excluded_stock)}.*', '', filtered_kr_raw, flags=re.IGNORECASE)
-        filtered_us_raw = re.sub(rf'.*{re.escape(excluded_stock)}.*', '', filtered_us_raw, flags=re.IGNORECASE)
+for code in recent_excluded_codes:
+    if len(code.strip()) > 1:
+        filtered_kr_raw = re.sub(rf'.*{re.escape(code)}.*', '', filtered_kr_raw, flags=re.IGNORECASE)
+        filtered_us_raw = re.sub(rf'.*{re.escape(code)}.*', '', filtered_us_raw, flags=re.IGNORECASE)
 
-print(f"[중복 방지] 대시보드 텍스트에서 최근 종목 필터링 완료")
+print(f"[중복 방지] 대시보드 텍스트에서 최근 티커/코드 필터링 완료")
 
-# 6. 미리보기/차트 생성을 위해 모든 감지된 종목 차트 사전 캡처 (미장 티커 및 국장 코드 통합 매핑)
+# 6. 미리보기/차트 사전 캡처
 generated_charts_map = {}
 for key_id, info in dynamic_stocks.items():
     res_path = capture_tradingview_chart(info["tv_symbol"], info["filename"])
     if res_path:
         tv_url = f"https://www.tradingview.com/symbols/{info['tv_url_code']}/"
-        
         map_key = info["code"].upper()
         chart_data = {
             "path": res_path,
             "tv_url": tv_url,
             "display_name": info["display_name"]
         }
-        
-        # 국장 코드 및 미장 티커 모두 키값으로 등록
         generated_charts_map[map_key] = chart_data
         if ":" in info["tv_symbol"]:
             ticker_only = info["tv_symbol"].split(":")[1].upper()
@@ -182,11 +176,11 @@ for key_id, info in dynamic_stocks.items():
 fx_path = capture_fx_tradingview("usdkrw_chart.png")
 finviz_path = capture_finviz_map("finviz_map.png")
 
-# 7. Gemini API 호출 (필터링된 대시보드 데이터 및 티커 명시 규칙 주입)
+# 7. Gemini API 호출
 system_instruction = load_prompt("prompt.txt")
 user_prompt = f"""
 --- [🚨 절대 준수해야 할 종목 선정 규칙] ---
-1. 아래 대시보드 데이터는 최근 5일 이내에 다뤘던 종목들이 완전히 필터링(삭제)되어 제거된 상태입니다.
+1. 아래 대시보드 데이터는 최근 5일 이내에 다뤘던 티커/코드들이 완전히 필터링(삭제)되어 제거된 상태입니다.
 2. 데이터에 남아있는 신선한 종목들 중에서만 특징주를 골라주세요.
 3. 특징주 분석 파트의 소제목은 반드시 다음과 같이 [번호. 종목명 (티커 또는 6자리 코드)] 형태로 작성해 주세요. 
    (예시: 1. 애플 (AAPL) 또는 2. 삼성전자 (005930))
@@ -254,8 +248,9 @@ if "[경제 이슈]" in formatted_body:
     if finviz_html and finviz_html not in formatted_body:
         formatted_body = re.sub(r'([^\n]*기술주[^\n]*\n)', rf'{finviz_html}\n\1', formatted_body, count=1)
 
-# 9. [특징주 분석] 티커/코드 기반 정밀 매칭 및 오늘 다룬 종목 추출
+# 9. [특징주 분석] 티커/코드 기반 정밀 매칭 및 실시간 동적 캡처 방어 로직
 today_selected_stock_names = []
+today_selected_codes = []
 
 if "[특징주 분석]" in formatted_body:
     main_parts = formatted_body.split("[특징주 분석]")
@@ -281,19 +276,42 @@ if "[특징주 분석]" in formatted_body:
             
             heading_line = block_lines[0].strip()
             
-            # 소제목 괄호 안의 티커(AAPL) 또는 국장 코드(005930)를 정규식으로 직접 추출
+            # 소제목 괄호 안의 티커 또는 국장 코드 추출
             code_match = re.search(r'\(([A-Z0-9]{2,6})\)', heading_line)
             extracted_code = code_match.group(1).upper() if code_match else None
             
-            # 순수 종목명 추출 (제목 조립용)
             clean_name_match = re.sub(r'^\d+\.\s+', '', heading_line).strip()
             clean_display_name = re.sub(r'\s*[\(\[\{].*?[\)\]\}]', '', clean_name_match).strip()
             
-            if clean_display_name and clean_display_name not in today_selected_stock_names:
+            if clean_display_name:
                 today_selected_stock_names.append(clean_display_name)
+            if extracted_code:
+                today_selected_codes.append(extracted_code)
             
             matched_info = generated_charts_map.get(extracted_code) if extracted_code else None
             
+            # [방어 로직] 사전 캡처 목록에 없지만 티커가 감지된 경우 실시간 즉시 캡처 실행
+            if not matched_info and extracted_code:
+                print(f"[실시간 동적 캡처] 사전 목록에 없는 종목 발견: {clean_display_name} ({extracted_code}) -> 즉시 캡처 시도")
+                if len(extracted_code) == 6 and extracted_code.isdigit():
+                    tv_sym = f"KRX:{extracted_code}"
+                    fname = f"chart_{extracted_code}.png"
+                    t_url_code = f"KRX-{extracted_code}"
+                else:
+                    tv_sym = f"NASDAQ:{extracted_code}"
+                    fname = f"chart_{extracted_code}.png"
+                    t_url_code = f"NASDAQ-{extracted_code}"
+                
+                res_path = capture_tradingview_chart(tv_sym, fname)
+                if res_path:
+                    tv_url = f"https://www.tradingview.com/symbols/{t_url_code}/"
+                    matched_info = {
+                        "path": res_path,
+                        "tv_url": tv_url,
+                        "display_name": clean_display_name
+                    }
+                    generated_charts_map[extracted_code] = matched_info
+
             if matched_info:
                 filename_only = os.path.basename(matched_info["path"])
                 stock_html = f'<div class="img-box"><img src="assets/{filename_only}?t={current_timestamp}" alt="{clean_display_name} 차트"></div>'
@@ -310,7 +328,7 @@ if "[특징주 분석]" in formatted_body:
         feature_text = "\n".join(new_feature_blocks)
         formatted_body = intro_text + feature_text
 
-# 10. 요청하신 고정 양식으로 제목 강제 조립 ([월] [일] 경제 주요 흐름 및 특징주 분석 - [종목들])
+# 10. 고정 양식 제목 강제 조립 ([월] [일] 경제 주요 흐름 및 특징주 분석 - [종목들])
 current_month = current_dt.month
 current_day = current_dt.day
 
@@ -322,9 +340,9 @@ else:
 post_title = f"{current_month}월 {current_day}일 경제 주요 흐름 및 특징주 분석 - {stocks_joined}"
 print(f"[TITLE 확정] {post_title}")
 
-# 11. 히스토리 저장 (정화된 종목명만 반영)
-save_stock_history(today_selected_stock_names)
-print(f"[종목 히스토리 저장 완료] 오늘 다룬 종목: {today_selected_stock_names}")
+# 11. 히스토리에 순수 티커/코드만 저장
+save_stock_history(today_selected_codes)
+print(f"[종목 히스토리 저장 완료] 오늘 저장된 티커/코드: {today_selected_codes}")
 
 # 12. HTML 미리보기 파일 생성
 html_body_formatted = formatted_body.replace("\n", "<br>")
