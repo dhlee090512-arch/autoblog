@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timezone, timedelta
 import requests
 from bs4 import BeautifulSoup
-from PIL import Image
+from PIL import Image  # 환율 및 Finviz 이미지를 Gemini에 전달하기 위한 라이브러리
 from google import genai
 from google.genai import types
 
@@ -25,11 +25,10 @@ else:
         if os.path.isfile(file_path):
             try:
                 os.remove(file_path)
-                print(f"[INIT] 이전 잔여 파일 제거: {f}")
+                print(f"[삭제 완료] 이전 잔여 파일 제거: {f}")
             except Exception as e:
-                print(f"[INIT] 파일 제거 실패 무시 {f}: {e}")
+                print(f"[삭제 실패 무시] {f}: {e}")
 
-GITHUB_PAGES_BASE_URL = "https://dhlee090512-arch.github.io/autoblog/assets"
 current_timestamp = int(time.time())
 
 # 한국 시간(KST, UTC+9) 구하기
@@ -49,25 +48,16 @@ def load_prompt(filename="prompt.txt"):
     with open(filename, "r", encoding="utf-8") as f:
         return f.read()
 
-# 3. 종목 히스토리 관리 (블랙리스트 오염 방지 정화 로직 포함)
+# 3. 종목 히스토리 관리 (최근 5일간 다룬 종목 기록)
 HISTORY_FILE = "stock_history.json"
 
 def load_stock_history():
     if os.path.exists(HISTORY_FILE):
         try:
             with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-                history = json.load(f)
-                cleaned_history = []
-                for h in history:
-                    # 30자 미만의 순수 종목명만 유효 데이터로 인정
-                    valid_stocks = [s for s in h.get("stocks", []) if len(s.strip()) < 30]
-                    cleaned_history.append({"date": h["date"], "stocks": valid_stocks})
-                print(f"[HISTORY] 히스토리 로드 성공 (총 {len(cleaned_history)}일치)")
-                return cleaned_history
-        except Exception as e:
-            print(f"[HISTORY] 히스토리 로드 오류 (초기화): {e}")
+                return json.load(f)
+        except:
             return []
-    print("[HISTORY] 기존 history 파일 없음. 새로 시작합니다.")
     return []
 
 def save_stock_history(today_stocks):
@@ -75,21 +65,19 @@ def save_stock_history(today_stocks):
     today_str = datetime.now(kst).strftime("%Y-%m-%d")
     
     history = [h for h in history if h["date"] != today_str]
-    valid_today_stocks = [s for s in today_stocks if len(s.strip()) < 30]
-    history.append({"date": today_str, "stocks": valid_today_stocks})
-    history = history[-5:] # 최근 5일치 유지
+    history.append({"date": today_str, "stocks": today_stocks})
+    history = history[-5:] # 최근 5일치만 유지
     
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
-    print(f"[HISTORY] 오늘 다룬 종목 저장 완료: {valid_today_stocks}")
 
-# 최근 다뤘던 종목들 로드 및 블랙리스트 목록 생성
+# 최근 다뤘던 종목들 로드
 history_data = load_stock_history()
 recent_excluded_stocks = []
 for h in history_data:
     recent_excluded_stocks.extend(h["stocks"])
-recent_excluded_stocks = list(set(recent_excluded_stocks))
-print(f"[BLACKLIST] 최근 다룬 종목 목록: {recent_excluded_stocks}")
+recent_excluded_str = ", ".join(set(recent_excluded_stocks)) if recent_excluded_stocks else "없음"
+print(f"[종목 중복 방지] 최근 다룬 종목들: {recent_excluded_str}")
 
 # 4. 대시보드 크롤링 및 종목 동적 추출
 def fetch_dashboard_and_extract_stocks(kr_url, us_url):
@@ -102,13 +90,11 @@ def fetch_dashboard_and_extract_stocks(kr_url, us_url):
         "DXY", "VIX", "WTI", "BRENT", "GOLD", "US10Y", "US02Y"
     }
 
-    print(f"[CRAWL] 국장 대시보드 요청: {kr_url}")
     res_kr = requests.get(kr_url, headers=headers)
     res_kr.raise_for_status()
     soup_kr = BeautifulSoup(res_kr.text, 'html.parser')
     kr_raw_text = soup_kr.get_text(separator="\n", strip=True)
 
-    print(f"[CRAWL] 미장 대시보드 요청: {us_url}")
     res_us = requests.get(us_url, headers=headers)
     res_us.raise_for_status()
     soup_us = BeautifulSoup(res_us.text, 'html.parser')
@@ -128,12 +114,10 @@ def fetch_dashboard_and_extract_stocks(kr_url, us_url):
                 "aliases": [clean_name.lower(), code.lower()]
             }
 
-    # 미장 종목 (길이 25자 이하, 줄바꿈 없는 순수 티커 항목만 엄격 추출)
-    us_matches = re.findall(r'([A-Za-z0-9&\s,.-]{1,25})\s*[\(\[\{]([A-Z]{2,5})[\)\]\}]', us_raw_text)
+    # 미장 종목
+    us_matches = re.findall(r'([가-힣A-Za-z0-9&\s,.]+)\s*[\(\[\{]([A-Z]{2,5})[\)\]\}]', us_raw_text)
     for name, ticker in us_matches:
         clean_name = name.strip()
-        if "\n" in clean_name or len(clean_name) > 25:
-            continue
         base_name = re.sub(r',?\s*(Inc\.?|Corp\.?|Co\.?|Ltd\.?)$', '', clean_name, flags=re.IGNORECASE).strip()
         extracted_stocks[clean_name] = {
             "tv_symbol": f"NASDAQ:{ticker}",
@@ -148,7 +132,7 @@ def fetch_dashboard_and_extract_stocks(kr_url, us_url):
             ]
         }
 
-    print(f"[CRAWL] 추출된 유효 종목 총 {len(extracted_stocks)}개")
+    print(f"[동적 종목 추출 완료] 총 {len(extracted_stocks)}개: {list(extracted_stocks.keys())}")
     return kr_raw_text, us_raw_text, extracted_stocks
 
 kr_url = "https://dhlee090512-arch.github.io/report/index.html"
@@ -156,50 +140,62 @@ us_url = "https://dhlee090512-arch.github.io/report/us_index.html"
 
 kr_raw, us_raw, dynamic_stocks = fetch_dashboard_and_extract_stocks(kr_url, us_url)
 
-# 5. 거시경제 차트(환율, Finviz) 사전 캡처
+# 5. 차트 및 에셋 사전 캡처
+generated_charts_map = {}
+for stock_key, info in dynamic_stocks.items():
+    res_path = capture_tradingview_chart(info["tv_symbol"], info["filename"])
+    if res_path:
+        tv_url = f"https://www.tradingview.com/symbols/{info['tv_url_code']}/"
+        generated_charts_map[stock_key] = {
+            "path": res_path,
+            "tv_url": tv_url,
+            "aliases": info["aliases"]
+        }
+
 fx_path = capture_fx_tradingview("usdkrw_chart.png")
 finviz_path = capture_finviz_map("finviz_map.png")
 
-# 6. 대시보드 텍스트에서 최근 다뤘던 종목 원천 삭제(필터링) 처리
-filtered_kr_raw = kr_raw
-filtered_us_raw = us_raw
-
-for excluded_stock in recent_excluded_stocks:
-    if len(excluded_stock.strip()) > 1:
-        filtered_kr_raw = re.sub(rf'.*{re.escape(excluded_stock)}.*', '', filtered_kr_raw, flags=re.IGNORECASE)
-        filtered_us_raw = re.sub(rf'.*{re.escape(excluded_stock)}.*', '', filtered_us_raw, flags=re.IGNORECASE)
-
-# 7. Gemini API 호출
+# 6. Gemini API 호출 (텍스트 + 환율 이미지 + Finviz 이미지 멀티모달 페이로드 구성)
 system_instruction = load_prompt("prompt.txt")
 user_prompt = f"""
---- [🚨 절대 준수해야 할 종목 선정 규칙] ---
-1. 아래 대시보드 데이터는 최근 5일 이내에 다뤘던 종목들이 완전히 필터링(삭제)된 상태입니다.
-2. 데이터에 남아있는 신선한 종목들 중에서만 특징주를 골라주세요. 절대로 최근 다룬 종목을 반복해서 선택하지 마세요.
+--- [종목 선정 주의사항] ---
+최근 며칠 동안 이미 다뤘던 아래 종목들은 독자들의 피로도를 낮추기 위해 이번 포스팅에서는 가능한 한 제외하거나 비중을 낮추고, 대시보드에 있는 다른 신선한 종목들을 위주로 특징주를 선정해 주세요.
+- 최근 다뤘던 종목들: [{recent_excluded_str}]
 
---- [국장 대시보드 Data (필터링됨)] ---
-{filtered_kr_raw[:3500]}
+--- [국장 대시보드 Data] ---
+{kr_raw[:3500]}
 
---- [미장 대시보드 Data (필터링됨)] ---
-{filtered_us_raw[:3500]}
+--- [미장 대시보드 Data] ---
+{us_raw[:3500]}
 
 첨부된 [환율 차트 이미지]와 [Finviz 섹터 맵 이미지]를 직접 분석하여, 환율의 실제 움직임 추세와 업종별/테마별 강세·약세를 본문에 구체적으로 반영해 주세요.
 """
 
 contents_payload = [user_prompt]
 
+# 환율 이미지 첨부
 if fx_path and os.path.exists(fx_path):
-    contents_payload.append(Image.open(fx_path))
-    print("[GEMINI] 환율 차트 이미지 탑재 완료")
+    try:
+        fx_img = Image.open(fx_path)
+        contents_payload.append(fx_img)
+        print("[Gemini] 환율 차트 이미지 멀티모달 입력 준비 완료")
+    except Exception as e:
+        print(f"[경고] 환율 이미지 로드 실패: {e}")
 
+# Finviz 맵 이미지 첨부
 if finviz_path and os.path.exists(finviz_path):
-    contents_payload.append(Image.open(finviz_path))
-    print("[GEMINI] Finviz 맵 이미지 탑재 완료")
+    try:
+        finviz_img = Image.open(finviz_path)
+        contents_payload.append(finviz_img)
+        print("[Gemini] Finviz 맵 이미지 멀티모달 입력 준비 완료")
+    except Exception as e:
+        print(f"[경고] Finviz 이미지 로드 실패: {e}")
 
 models_to_try = ["gemini-3.5-flash-lite", "gemini-3.8-flash"]
 response = None
 
 for model_name in models_to_try:
-    print(f"[GEMINI] 모델 호출 시도: {model_name}")
+    print(f"[{model_name}] 호출 중...")
     try:
         response = client.models.generate_content(
             model=model_name,
@@ -210,17 +206,16 @@ for model_name in models_to_try:
             ),
         )
         if response and response.text:
-            print(f"[GEMINI] 모델 {model_name} 호출 성공!")
             break
     except Exception as e:
-        print(f"[GEMINI] 모델 {model_name} 호출 에러: {e}")
+        print(f"호출 에러: {e}")
 
 if not response:
-    raise RuntimeError("Gemini API 호출에 최종 실패했습니다.")
+    raise RuntimeError("Gemini API 호출에 실패했습니다.")
 
 blog_text = response.text
 
-# 8. 제목 및 본문 분리
+# 7. 제목 및 본문 분리
 post_title = "오늘의 경제 주요 흐름 및 특징주 분석"
 lines = blog_text.strip().split("\n")
 for line in lines:
@@ -231,15 +226,27 @@ for line in lines:
 
 formatted_body = blog_text
 
-# 9. 거시경제 이슈 파트 이미지 치환
-fx_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/usdkrw_chart.png?t={current_timestamp}" alt="환율 차트"></div>' if fx_path else ""
-finviz_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/finviz_map.png?t={current_timestamp}" alt="Finviz 섹터 맵"></div>' if finviz_path else ""
+# 8. 이미지 HTML 상대 경로(`assets/...`) 적용 및 주입
+fx_html = f'<div class="img-box"><img src="assets/usdkrw_chart.png?t={current_timestamp}" alt="환율 차트"></div>' if fx_path else ""
+finviz_html = f'<div class="img-box"><img src="assets/finviz_map.png?t={current_timestamp}" alt="Finviz 섹터 맵"></div>' if finviz_path else ""
 
 if "[경제 이슈]" in formatted_body:
-    formatted_body = re.sub(r'\([^)]*환율[^)]*\)', fx_html, formatted_body, flags=re.IGNORECASE)
-    formatted_body = re.sub(r'\([^)]*finviz[^)]*\)', finviz_html, formatted_body, flags=re.IGNORECASE)
+    formatted_body = re.sub(r'\(환율\s*사진\)', fx_html, formatted_body, flags=re.IGNORECASE)
+    formatted_body = re.sub(r'\(finviz\s*사진\)', finviz_html, formatted_body, flags=re.IGNORECASE)
 
-# 10. [특징주 분석] 파트 분석 및 정밀 매칭을 통한 실시간 종목 차트 캡처 및 주입
+    if fx_html and fx_html not in formatted_body:
+        if "우상향 추세입니다" in formatted_body:
+            formatted_body = re.sub(r'([^\n]*우상향 추세입니다[^\n]*\n)', rf'\1\n{fx_html}\n', formatted_body, count=1)
+        elif "환율" in formatted_body:
+            formatted_body = re.sub(r'([^\n]*환율[^\n]*\n)', rf'{fx_html}\n\1', formatted_body, count=1)
+
+    if finviz_html and finviz_html not in formatted_body:
+        if "전반적인 테마" in formatted_body:
+            formatted_body = re.sub(r'([^\n]*전반적인 테마[^\n]*\n)', rf'{finviz_html}\n\1', formatted_body, count=1)
+        elif "기술주" in formatted_body:
+            formatted_body = re.sub(r'([^\n]*기술주[^\n]*\n)', rf'{finviz_html}\n\1', formatted_body, count=1)
+
+# 9. [특징주 분석] 소제목 블록 단위 격리 치환 및 오늘 다룬 종목 추출
 today_selected_stocks = []
 
 if "[특징주 분석]" in formatted_body:
@@ -250,12 +257,9 @@ if "[특징주 분석]" in formatted_body:
     feature_lines = feature_text.split("\n")
     heading_indices = []
     for idx, line in enumerate(feature_lines):
-        clean_line = line.strip()
-        if re.match(r'^\d+\.\s+', clean_line) and len(clean_line) < 60 and '.' not in clean_line[:-1]:
+        if re.match(r'^\d+\.\s+', line.strip()):
             heading_indices.append(idx)
             
-    print(f"[MATCH] 감지된 특징주 소제목 개수: {len(heading_indices)}")
-    
     new_feature_blocks = []
     if heading_indices:
         new_feature_blocks.append("\n".join(feature_lines[:heading_indices[0]]))
@@ -268,58 +272,37 @@ if "[특징주 분석]" in formatted_body:
             block_text = "\n".join(block_lines)
             
             heading_line = block_lines[0].strip()
-            raw_stock_name = re.sub(r'^\d+\.\s+', '', heading_line).strip()
+            stock_name_raw = re.sub(r'^\d+\.\s+', '', heading_line).strip()
             
-            if len(raw_stock_name) > 25:
-                raw_stock_name = re.split(r'[,.\s]+', raw_stock_name)[0]
+            for stock_key in dynamic_stocks.keys():
+                if stock_key.lower() in stock_name_raw.lower() or stock_name_raw.lower() in stock_key.lower():
+                    if stock_key not in today_selected_stocks:
+                        today_selected_stocks.append(stock_key)
             
-            clean_search = re.sub(r',?\s*(Inc\.?|Corp\.?|Co\.?|Ltd\.?)$', '', raw_stock_name, flags=re.IGNORECASE).strip().lower()
-            clean_search_no_space = clean_search.replace(" ", "")
-            
-            print(f"\n[MATCH] 소제목: '{heading_line}' -> 검색 키워드: '{raw_stock_name}'")
+            search_term = stock_name_raw.lower()
+            clean_search = re.sub(r',?\s*(Inc\.?|Corp\.?|Co\.?|Ltd\.?)$', '', search_term).strip()
             
             matched_info = None
-            matched_stock_key = None
-            
-            for stock_key, info in dynamic_stocks.items():
+            for stock_key, info in generated_charts_map.items():
                 sk_lower = stock_key.lower()
-                sk_no_space = sk_lower.replace(" ", "")
-                
-                if sk_lower == clean_search or sk_no_space == clean_search_no_space or sk_lower in clean_search or clean_search in sk_lower:
-                    matched_stock_key = stock_key
+                if sk_lower in clean_search or clean_search in sk_lower or clean_search in sk_lower.replace(" ", ""):
                     matched_info = info
-                    print(f"[MATCH] ✅ 대시보드 키 매칭 성공: '{stock_key}'")
                     break
-                
-                matched_alias = False
                 for alias in info["aliases"]:
-                    if alias == clean_search or alias == clean_search_no_space or alias in clean_search or clean_search in alias:
-                        matched_alias = True
+                    if alias in clean_search or clean_search in alias:
+                        matched_info = info
                         break
-                if matched_alias:
-                    matched_stock_key = stock_key
-                    matched_info = info
-                    print(f"[MATCH] ✅ 대시보드 에이리어스 매칭 성공: '{stock_key}'")
+                if matched_info:
                     break
-            
-            if matched_stock_key and matched_stock_key not in today_selected_stocks:
-                today_selected_stocks.append(matched_stock_key)
             
             if matched_info:
-                print(f"[CAPTURE] 실시간 차트 캡처 실행: {matched_info['tv_symbol']} -> {matched_info['filename']}")
-                res_path = capture_tradingview_chart(matched_info["tv_symbol"], matched_info["filename"])
-                if res_path:
-                    filename_only = os.path.basename(res_path)
-                    stock_html = f'<div class="img-box"><img src="{GITHUB_PAGES_BASE_URL}/{filename_only}?t={current_timestamp}" alt="{raw_stock_name} 차트"></div>'
-                    tv_url_text = f"https://www.tradingview.com/symbols/{matched_info['tv_url_code']}/"
-                    
-                    block_text = re.sub(r'\([^)]*(?:차트|이미지)[^)]*\)', stock_html, block_text, flags=re.IGNORECASE)
-                    block_text = re.sub(r'\([^)]*(?:url|URL|링크|트레이딩뷰)[^)]*\)', tv_url_text, block_text, flags=re.IGNORECASE)
-                    print(f"[CAPTURE] 차트 캡처 및 HTML 치환 완료: {filename_only}")
-                else:
-                    print(f"[CAPTURE-ERROR] 캡처 실패 (None 반환): {matched_info['tv_symbol']}")
-            else:
-                print(f"[MATCH-FAIL] ❌ 매칭 실패: '{raw_stock_name}'와 일치하는 종목을 대시보드에서 찾지 못했습니다.")
+                filename_only = os.path.basename(matched_info["path"])
+                # 상대 경로(assets/) 적용으로 미리보기에서 이미지 즉시 로드 보장
+                stock_html = f'<div class="img-box"><img src="assets/{filename_only}?t={current_timestamp}" alt="{stock_name_raw} 차트"></div>'
+                tv_url_text = matched_info["tv_url"]
+                
+                block_text = block_text.replace("(종목 차트)", stock_html)
+                block_text = block_text.replace("(종목 트레이딩뷰 url)", tv_url_text)
             
             new_feature_blocks.append(block_text)
             
@@ -328,9 +311,9 @@ if "[특징주 분석]" in formatted_body:
 
 # 히스토리 저장
 save_stock_history(today_selected_stocks)
-print(f"[FINISH] 최종 처리 완료. 선택된 종목: {today_selected_stocks}")
+print(f"[종목 히스토리 저장 완료] 오늘 다룬 종목: {today_selected_stocks}")
 
-# 11. HTML 미리보기 파일 생성
+# 10. HTML 미리보기 파일 생성
 html_body_formatted = formatted_body.replace("\n", "<br>")
 json_safe_clipboard_text = json.dumps(formatted_body)
 
@@ -390,4 +373,4 @@ html_content = f"""<!DOCTYPE html>
 with open("blog_preview.html", "w", encoding="utf-8") as f:
     f.write(html_content)
 
-print("[FINISH] blog_preview.html 생성 완료!")
+print("blog_preview.html 생성 완료!")
