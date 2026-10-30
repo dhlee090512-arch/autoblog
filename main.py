@@ -49,14 +49,20 @@ def load_prompt(filename="prompt.txt"):
     with open(filename, "r", encoding="utf-8") as f:
         return f.read()
 
-# 3. 종목 히스토리 관리 (최근 5일간 다룬 종목 기록)
+# 3. 종목 히스토리 관리 (오염된 긴 본문 텍스트 유입 방지 정화 로직 포함)
 HISTORY_FILE = "stock_history.json"
 
 def load_stock_history():
     if os.path.exists(HISTORY_FILE):
         try:
             with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                history = json.load(f)
+                cleaned_history = []
+                for h in history:
+                    # 30자 미만의 순수 종목명/티커만 유효 데이터로 인정
+                    valid_stocks = [s for s in h.get("stocks", []) if len(s.strip()) < 30]
+                    cleaned_history.append({"date": h["date"], "stocks": valid_stocks})
+                return cleaned_history
         except:
             return []
     return []
@@ -66,18 +72,20 @@ def save_stock_history(today_stocks):
     today_str = current_dt.strftime("%Y-%m-%d")
     
     history = [h for h in history if h["date"] != today_str]
-    history.append({"date": today_str, "stocks": today_stocks})
+    valid_today_stocks = [s for s in today_stocks if len(s.strip()) < 30]
+    history.append({"date": today_str, "stocks": valid_today_stocks})
     history = history[-5:] # 최근 5일치만 유지
     
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
-# 최근 다뤘던 종목들 로드
+# 최근 다뤘던 종목들 로드 및 정화된 블랙리스트 구성
 history_data = load_stock_history()
 recent_excluded_stocks = []
 for h in history_data:
     recent_excluded_stocks.extend(h["stocks"])
-recent_excluded_str = ", ".join(set(recent_excluded_stocks)) if recent_excluded_stocks else "없음"
+recent_excluded_stocks = list(set(recent_excluded_stocks))
+recent_excluded_str = ", ".join(recent_excluded_stocks) if recent_excluded_stocks else "없음"
 print(f"[종목 중복 방지] 최근 다룬 종목들: {recent_excluded_str}")
 
 # 4. 대시보드 크롤링 및 종목 동적 추출 (티커/코드 매핑 사전 구축)
@@ -151,17 +159,25 @@ for excluded_stock in recent_excluded_stocks:
 
 print(f"[중복 방지] 대시보드 텍스트에서 최근 종목 필터링 완료")
 
-# 6. 미리보기/차트 생성을 위해 모든 감지된 종목 차트 사전 캡처
+# 6. 미리보기/차트 생성을 위해 모든 감지된 종목 차트 사전 캡처 (미장 티커 및 국장 코드 통합 매핑)
 generated_charts_map = {}
 for key_id, info in dynamic_stocks.items():
     res_path = capture_tradingview_chart(info["tv_symbol"], info["filename"])
     if res_path:
         tv_url = f"https://www.tradingview.com/symbols/{info['tv_url_code']}/"
-        generated_charts_map[info["code"].upper()] = {
+        
+        map_key = info["code"].upper()
+        chart_data = {
             "path": res_path,
             "tv_url": tv_url,
             "display_name": info["display_name"]
         }
+        
+        # 국장 코드 및 미장 티커 모두 키값으로 등록
+        generated_charts_map[map_key] = chart_data
+        if ":" in info["tv_symbol"]:
+            ticker_only = info["tv_symbol"].split(":")[1].upper()
+            generated_charts_map[ticker_only] = chart_data
 
 fx_path = capture_fx_tradingview("usdkrw_chart.png")
 finviz_path = capture_finviz_map("finviz_map.png")
@@ -306,7 +322,7 @@ else:
 post_title = f"{current_month}월 {current_day}일 경제 주요 흐름 및 특징주 분석 - {stocks_joined}"
 print(f"[TITLE 확정] {post_title}")
 
-# 11. 히스토리 저장
+# 11. 히스토리 저장 (정화된 종목명만 반영)
 save_stock_history(today_selected_stock_names)
 print(f"[종목 히스토리 저장 완료] 오늘 다룬 종목: {today_selected_stock_names}")
 
