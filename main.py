@@ -59,7 +59,6 @@ def load_stock_history():
                 history = json.load(f)
                 cleaned_history = []
                 for h in history:
-                    # 10자 이내의 순수 티커/코드만 유효 데이터로 인정
                     valid_codes = [c for c in h.get("stocks", []) if len(c.strip()) < 10]
                     cleaned_history.append({"date": h["date"], "stocks": valid_codes})
                 return cleaned_history
@@ -176,14 +175,19 @@ for key_id, info in dynamic_stocks.items():
 fx_path = capture_fx_tradingview("usdkrw_chart.png")
 finviz_path = capture_finviz_map("finviz_map.png")
 
-# 7. Gemini API 호출
+# 7. Gemini API 호출 (국장 2개, 미장 2개 균형 선정 및 이미지 위치 텍스트 지침 부여)
 system_instruction = load_prompt("prompt.txt")
 user_prompt = f"""
 --- [🚨 절대 준수해야 할 종목 선정 규칙] ---
 1. 아래 대시보드 데이터는 최근 다뤘던 티커/코드들이 완전히 필터링(삭제)되어 제거된 상태입니다.
-2. 데이터에 남아있는 신선한 종목들 중에서 특징주를 **반드시 국장(한국 주식) 2개, 미장(미국 주식) 2개, 총 4개**를 골라주세요.
+2. 데이터에 남아있는 신선한 종목들 중에서 특징주를 **반드시 국장(한국 주식) 2개, 미장(미국 주식) 2개, 총 4개**를 균형 있게 골라주세요.
 3. 특징주 분석 파트의 소제목은 반드시 다음과 같이 [번호. 종목명 (티커 또는 6자리 코드)] 형태로 작성해 주세요. 
    (예시: 1. 삼성전자 (005930), 2. 애플 (AAPL))
+
+--- [🚨 거시경제 이미지 위치 지침] ---
+- 본문 작성 시 환율 분석 내용 바로 위에는 정확히 (환율 사진) 문구를 작성해 주세요.
+- Finviz 섹터 맵 분석 내용 바로 위에는 정확히 (finviz 사진) 문구를 작성해 주세요.
+- 마크다운 이미지 태그 ![...](...) 대신 위의 괄호 텍스트로만 정확히 위치를 지정해 주세요.
 
 --- [국장 대시보드 Data (필터링됨)] ---
 {filtered_kr_raw[:3500]}
@@ -210,11 +214,12 @@ if finviz_path and os.path.exists(finviz_path):
     except Exception as e:
         print(f"[경고] Finviz 이미지 로드 실패: {e}")
 
+# 8. Gemini API 호출 (1순위: gemini-3.5-flash-lite 실패 시 -> 2순위: gemini-3.8-flash로 자동 전환)
 models_to_try = ["gemini-3.5-flash-lite", "gemini-3.8-flash"]
 response = None
 
 for model_name in models_to_try:
-    print(f"[{model_name}] 호출 중...")
+    print(f"[{model_name}] 호출 시도 중...")
     try:
         response = client.models.generate_content(
             model=model_name,
@@ -225,30 +230,44 @@ for model_name in models_to_try:
             ),
         )
         if response and response.text:
+            print(f"[{model_name}] 호출 성공!")
             break
     except Exception as e:
-        print(f"호출 에러: {e}")
+        print(f"[{model_name}] 호출 에러 발생: {e}")
+        print("-> 다음 대체 모델로 전환합니다.")
+        continue
 
-if not response:
-    raise RuntimeError("Gemini API 호출에 실패했습니다.")
+if not response or not response.text:
+    raise RuntimeError("모든 Gemini 모델(flash-lite, 3.8-flash) 호출에 최종 실패했습니다. (일시적인 서버 부하)")
 
 blog_text = response.text
 
-# 8. 거시경제 이슈 파트 이미지 HTML 치환
+# 9. 거시경제 이슈 파트 이미지 HTML 치환
 fx_html = f'<div class="img-box"><img src="assets/usdkrw_chart.png?t={current_timestamp}" alt="환율 차트"></div>' if fx_path else ""
 finviz_html = f'<div class="img-box"><img src="assets/finviz_map.png?t={current_timestamp}" alt="Finviz 섹터 맵"></div>' if finviz_path else ""
 
 formatted_body = blog_text
-if "[경제 이슈]" in formatted_body:
-    formatted_body = re.sub(r'\(환율\s*사진\)', fx_html, formatted_body, flags=re.IGNORECASE)
-    formatted_body = re.sub(r'\(finviz\s*사진\)', finviz_html, formatted_body, flags=re.IGNORECASE)
+if "[경제 이슈]" in formatted_body or "환율" in formatted_body:
+    formatted_body = re.sub(
+        r'(!\[.*?환율.*?\]\(.*?\)|`?\(환율\s*사진\)`?)',
+        fx_html,
+        formatted_body,
+        flags=re.IGNORECASE
+    )
+    
+    formatted_body = re.sub(
+        r'(!\[.*?finviz.*?\]\(.*?\)|`?\(finviz\s*사진\)`?)',
+        finviz_html,
+        formatted_body,
+        flags=re.IGNORECASE
+    )
 
     if fx_html and fx_html not in formatted_body:
         formatted_body = re.sub(r'([^\n]*환율[^\n]*\n)', rf'{fx_html}\n\1', formatted_body, count=1)
     if finviz_html and finviz_html not in formatted_body:
-        formatted_body = re.sub(r'([^\n]*기술주[^\n]*\n)', rf'{finviz_html}\n\1', formatted_body, count=1)
+        formatted_body = re.sub(r'([^\n]*핀비즈[^\n]*\n|[^\n]*Finviz[^\n]*\n)', rf'{finviz_html}\n\1', formatted_body, count=1)
 
-# 9. [특징주 분석] 티커/코드 기반 정밀 매칭 및 실시간 동적 캡처 방어 로직
+# 10. [특징주 분석] 티커/코드 기반 정밀 매칭 및 실시간 동적 캡처 방어 로직
 today_selected_stock_names = []
 today_selected_codes = []
 
@@ -276,7 +295,6 @@ if "[특징주 분석]" in formatted_body:
             
             heading_line = block_lines[0].strip()
             
-            # 소제목 괄호 안의 티커 또는 국장 코드 추출
             code_match = re.search(r'\(([A-Z0-9]{2,6})\)', heading_line)
             extracted_code = code_match.group(1).upper() if code_match else None
             
@@ -290,7 +308,6 @@ if "[특징주 분석]" in formatted_body:
             
             matched_info = generated_charts_map.get(extracted_code) if extracted_code else None
             
-            # [방어 로직] 사전 캡처 목록에 없지만 티커가 감지된 경우 실시간 즉시 캡처 실행
             if not matched_info and extracted_code:
                 print(f"[실시간 동적 캡처] 사전 목록에 없는 종목 발견: {clean_display_name} ({extracted_code}) -> 즉시 캡처 시도")
                 if len(extracted_code) == 6 and extracted_code.isdigit():
@@ -328,7 +345,7 @@ if "[특징주 분석]" in formatted_body:
         feature_text = "\n".join(new_feature_blocks)
         formatted_body = intro_text + feature_text
 
-# 10. 고정 양식 제목 강제 조립 ([월] [일] 경제 주요 흐름 및 특징주 분석 - [종목들])
+# 11. 고정 양식 제목 강제 조립
 current_month = current_dt.month
 current_day = current_dt.day
 
@@ -340,11 +357,11 @@ else:
 post_title = f"{current_month}월 {current_day}일 경제 주요 흐름 및 특징주 분석 - {stocks_joined}"
 print(f"[TITLE 확정] {post_title}")
 
-# 11. 히스토리에 순수 티커/코드만 저장
+# 12. 히스토리에 순수 티커/코드만 저장
 save_stock_history(today_selected_codes)
 print(f"[종목 히스토리 저장 완료] 오늘 저장된 티커/코드: {today_selected_codes}")
 
-# 12. HTML 미리보기 파일 생성
+# 13. HTML 미리보기 파일 생성
 html_body_formatted = formatted_body.replace("\n", "<br>")
 json_safe_clipboard_text = json.dumps(formatted_body)
 
